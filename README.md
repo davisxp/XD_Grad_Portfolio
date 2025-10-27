@@ -15,7 +15,7 @@ Each “Pitch” folder is a self-contained case study with **notes** (PDFs, dec
 | **3. LBO (Sponsor)** | Buyout case | LBO model + IC memo | Leverage, MOIC/IRR, covenant headroom |
 | **4. Buy-Side (Long/Short)** | Public-markets thesis | 1 Long + 1 Short pitch + models | Variant view, catalyst framing, risk sizing |
 | **5. LevFin / DCM** | Credit analysis | Debt-capacity note, Term sheet, Covenant workbook | Credit metrics, covenants, rating case |
-| **6. ECM** | Equity capital markets | IPO readiness, Follow-on funding case | Runway, dilution, peer IPO comps |
+| **6. LBO / Follow On (ECM)** | Equity capital markets | IPO readiness, Follow-on funding case | Runway, dilution, peer IPO comps |
 
 ---
 
