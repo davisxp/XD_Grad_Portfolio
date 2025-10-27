@@ -1,0 +1,20 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Python / notebooks
+__pycache__/
+.ipynb_checkpoints/
+
+# Office temp
+~$*.xls*
+~$*.doc*
+*.tmp
+
+# Secrets (none should be committed)
+.env
+*.key
+*.pem
+
+# Exclude working data dumps
+data/
