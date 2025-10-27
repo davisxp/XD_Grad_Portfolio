@@ -1,48 +1,73 @@
-# Life-Sciences Finance Portfolio
+# **Xavier Davis — Life-Sciences Finance Portfolio (IB | ER | DCM)**  
+Evidence pack showcasing valuation, modelling, and deal-structuring capability across healthcare and life-sciences sectors.  
+Built for graduate roles in **Investment Banking**, **Equity Research**, and **Capital Markets**.
 
-Curated work samples to evidence readiness for **Healthcare Investment Banking** and **Equity Research**.  
-**Maintainer:** Xavier Davis • Oxford Biomedical Sciences • Updated: 27 Oct 2025
+> **All work uses public information only — no MNPI.**  
+> Repository: [github.com/davisxp/XD_Grad_Portfolio](https://github.com/davisxp/XD_Grad_Portfolio)
 
-## Contents (living list)
-- `notes/initiation/` — full **ER initiation** (10–12 pages), PoS‑weighted rNPV, scenarios, catalysts.
-- `notes/flash/` — 1‑page **flash notes** reacting to RNS/FDA/EMA events (time‑boxed to 90 minutes).
-- `models/` — final **Excel models** (standalone & merger). Summaries appear inside each note.
-- `templates/` — public templates (initiation, flash, rNPV scaffold, model skeletons) used to build the above.
-- `docs/` — brief methodology and assumptions write‑ups.
+---
 
-> **No MNPI**: All work is based on public information only. This repo is for educational/employment samples and is **not investment advice**.
+## ⚙️ Structure Overview
+Each “Pitch” folder is a self-contained case study with **notes** (PDFs, decks, memos) and **models** (Excel + CSV exports).  
+The top-level map:
 
-## How to navigate
-1. Open the latest **initiation PDF** in `notes/initiation/` for a top‑to‑bottom view.  
-2. Open `models/*` for the underlying Excel with an audit trail and checks tab.  
-3. Flash notes show my real‑time reaction and model deltas.
+| Pitch | Theme | Core Deliverables | Key Skills Demonstrated |
+|-------|--------|------------------|--------------------------|
+| **1. Equity Research** | Initiation + Flashes | 10–12 pp Initiation, 2 Flash Notes, Standalone model | rNPV/DCF valuation, scientific fluency, concise writing |
+| **2. Merger (M&A)** | Strategic rationale | Pitch deck + teaser, Merger model + Acc/Dil CSVs | Synergy modelling, transaction structuring |
+| **3. LBO (Sponsor)** | Buyout case | LBO model + IC memo | Leverage, MOIC/IRR, covenant headroom |
+| **4. Buy-Side (Long/Short)** | Public-markets thesis | 1 Long + 1 Short pitch + model links | Variant view, catalyst framing, risk sizing |
+| **5. LevFin / DCM** | Credit analysis | Debt-capacity note, Term sheet, Covenant workbook | Credit metrics, covenants, rating case |
+| **6. ECM** | Equity capital markets | IPO readiness, Follow-on funding case | Runway, dilution, peer IPO comps |
 
-## Method summary
-- **Valuation:** rNPV for clinical assets (PoS by phase/indication), triangulated with comps/DCF for later‑stage names.
-- **Accounting & controls:** clean 3‑statement structure, versioned assumptions, checks tab, and sensitivity tables.
-- **Reproducibility:** templates in `templates/` ensure each artefact follows a consistent structure.
+---
 
-## How this repo is cited on applications
-- CV (one line): *Portfolio — ER initiation, 2 flash notes, 2 models* (**github.com/USERNAME/ls-finance-portfolio**).
-- LinkedIn Featured: link to this repo and to the initiation PDF directly.
-- When sharing a **specific** file, use a GitHub **Permalink** (commit‑hashed URL) so reviewers see the exact version you submitted.
+## 🧭 How to Review (2-minute path)
+1. Start at **Pitch 1 — Equity Research** → open the **Initiation PDF** (thesis → valuation → catalysts).  
+2. Download the **Standalone Model** and verify the **Checks** and **rNPV Summary** tabs.  
+3. Glance at the two **Flash Notes** for speed and signal interpretation.  
+4. Explore other pitches for breadth: M&A → LBO → Credit → ECM.
 
-## Compliance notes
-- No client data, no non‑public information. Company names are public‑market issuers only.
-- Forecasts and opinions are my own; they may be wrong. See `DISCLAIMER.md` for details.
+---
 
-## Structure
+## 🧮 Modelling Standards
+- **Traceability:** every figure in notes ties to a cell; version tags (`v1.2`, `v1.3`) match.  
+- **Hygiene:** stable 3-statement builds, transparent assumptions, named ranges only when additive.  
+- **Controls:** dedicated **Checks** sheet — must pass.  
+- **Transparency:** key tables exported as CSV so they render natively on GitHub.  
+- **Sources:** all assumptions footnoted (RNS, 10-K/AR, trial registries).  
+- **Sensitivity:** WACC, PoS, synergy, leverage, and peak-sales toggles.
+
+---
+
+## 📂 Folder Map
 ```
-ls-finance-portfolio/
-├─ models/
-├─ notes/
-│  ├─ initiation/
-│  └─ flash/
-├─ templates/
-├─ docs/
-└─ images/
+docs/
+Pitch_1_EquityResearch/
+Pitch_2_Merger/
+Pitch_3_LBO/
+Pitch_4_Buyside/
+Pitch_5_LevFin/
+Pitch_6_ECM/
+images/
+```
+Each pitch contains:
+```
+notes/      → PDFs (initiations, decks, memos)
+models/     → Excel files + CSV exports for web viewing
+models/csv/ → rNPV_Summary.csv, DCF_Summary.csv, etc.
 ```
 
 ---
 
-> Tip: keep large binary files small; where possible, include a short **Method** page in `docs/` explaining key drivers and sources.
+## 📜 Compliance
+All materials are based on publicly available information.  
+No confidential data or client content.  
+This repository is **not investment advice**.  
+Full disclaimer in `DISCLAIMER.md`.
+
+---
+
+**Maintainer:** *Xavier Davis*  
+**Updated:** October 2025  
+**Repo:** [github.com/davisxp/XD_Grad_Portfolio](https://github.com/davisxp/XD_Grad_Portfolio)
