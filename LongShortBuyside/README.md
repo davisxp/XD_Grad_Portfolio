@@ -5,4 +5,5 @@
 **Status:** Outlines complete; drafts in progress.  
 **Updated:** October 2025
 
-[⬅ Back to Main Portfolio](../)
+[Back to Main Portfolio](../)
+
