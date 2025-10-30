@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Model Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>body{font-family:system-ui,Segoe UI,Arial;margin:20px} table{border-collapse:collapse} td,th{border:1px solid #ddd;padding:6px}</style>
+</head>
+<body>
+  <h1>Spreadsheet Preview</h1>
+  <label>Workbook:
+    <select id="file">
+      <option value="excel/01_3Statement.xlsx">3-Statement</option>
+      <option value="excel/03_DCF.xlsx">DCF</option>
+      <option value="excel/06_SOTP.xlsx">SOTP</option>
+      <option value="excel/07_rNPV.xlsx">rNPV</option>
+    </select>
+  </label>
+  <div id="out"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    const repoRaw = (path) =>
+      `https://raw.githubusercontent.com/USER/REPO/BRANCH/${path}`; // replace USER/REPO/BRANCH
+
+    const out = document.getElementById('out');
+    const sel = document.getElementById('file');
+
+    async function render(path){
+      out.innerHTML = "Loading…";
+      const res = await fetch(repoRaw(path));
+      const buf = await res.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array'});
+      // Render first visible sheet
+      const sheetName = wb.SheetNames[0];
+      const html = XLSX.utils.sheet_to_html(wb.Sheets[sheetName], {editable:false});
+      out.innerHTML = html;
+    }
+
+    sel.addEventListener('change', () => render(sel.value));
+    render(sel.value);
+  </script>
+</body>
+</html>
