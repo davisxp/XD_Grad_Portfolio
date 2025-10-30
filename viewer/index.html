@@ -10,9 +10,14 @@
       --bg:#0b0c0f; --panel:#141821; --muted:#7f8aa3; --border:#202636; --text:#e7eaf0; --accent:#5bb98b;
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       --sans: system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans";
+      --cellw: 180px;       /* default column width */
+      --rowheadw: 64px;     /* row-header width */
     }
     @media (prefers-color-scheme: light) {
       :root{ --bg:#ffffff; --panel:#f7f8fb; --muted:#515f7a; --border:#e7eaf0; --text:#0b0c0f; --accent:#17664b; }
+    }
+    @media (max-width: 1100px){
+      :root{ --cellw: 150px; --rowheadw: 56px; }
     }
     *{box-sizing:border-box}
     html,body{height:100%}
@@ -35,7 +40,7 @@
     .btn.primary{background:var(--accent); color:white; border-color:var(--accent)}
     .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
     .pill{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px}
-    main{display:grid; grid-template-columns:1fr 320px; gap:14px; padding:14px; min-height:0}
+    main{display:grid; grid-template-columns:1fr 340px; gap:14px; padding:14px; min-height:0}
     aside{
       border-left:1px solid var(--border); padding-left:14px;
       display:flex; flex-direction:column; gap:12px; min-height:0;
@@ -47,16 +52,28 @@
     .panel h2{margin:0 0 8px 0; font-size:14px}
     .meta{color:var(--muted); font-size:12px}
     #sheetWrap{background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0}
-    table{border-collapse:collapse; font-size:13px; font-family:var(--mono)}
-    th, td{border:1px solid var(--border); padding:6px 8px; white-space:nowrap; vertical-align:top}
-    thead th{position:sticky; top:0; background:rgba(0,0,0,0.15)}
-    tbody td.firstcol, thead th.firstcol{position:sticky; left:0; background:rgba(0,0,0,0.10)}
+    table{
+      border-collapse:collapse; font-size:13px; font-family:var(--mono);
+      table-layout:fixed; min-width:100%;
+    }
+    th, td{
+      border:1px solid var(--border); padding:6px 8px; vertical-align:top;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; /* prevent spill */
+    }
+    thead th{position:sticky; top:0; background:rgba(0,0,0,0.15); z-index:2}
+    thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--border)}
+    tbody th.firstcol{
+      position:sticky; left:0; background:rgba(0,0,0,0.10); z-index:1; box-shadow:2px 0 0 0 var(--border)
+    }
+    /* Column sizing */
+    thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
+    thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
     tbody tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
     .error{color:#e87d7d}
     .kv{display:grid; grid-template-columns:110px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
     .kv b{color:var(--muted); font-weight:600}
+    .kv span{white-space:pre-wrap; word-break:break-word}
     code{font-family:var(--mono); font-size:12px}
-    details summary{cursor:pointer; color:var(--muted)}
     .hidden{display:none}
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
     @media (max-width: 980px) {
@@ -78,8 +95,8 @@
       <label class="pill">Sheet
         <select id="sheet"></select>
       </label>
-      <label class="pill"><input type="checkbox" id="showFormula"> Show formulas</label>
-      <label class="pill">Filter <input id="filter" type="text" placeholder="Type to filter rows"></label>
+      <label class="pill"><input type="checkbox" id="showFormula"> Show formulae</label>
+      <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows"></label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
@@ -102,18 +119,6 @@
           <b>Hyperlink</b><span>–</span>
         </div>
       </div>
-
-      <div class="panel" id="ranges">
-        <h2>Named ranges</h2>
-        <div class="meta">Workbook-level names</div>
-        <div id="namesBody" class="meta">None detected.</div>
-      </div>
-
-      <div class="panel" id="sources">
-        <h2>Sources</h2>
-        <div class="meta">Pulled from <code>SOURCES.md</code> if present.</div>
-        <div id="sourcesBody" class="meta">Looking for SOURCES.md…</div>
-      </div>
     </aside>
   </main>
 
@@ -122,7 +127,6 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     // === Configure your workbooks (case-sensitive paths) ===
     const files = [
@@ -207,12 +211,6 @@
         renderSheet(currentWS);
         status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
 
-        // show workbook names
-        renderNames();
-
-        // attempt to load SOURCES.md from repo root
-        loadSources();
-
         // reflect in download link
         syncLink();
       }catch(e){
@@ -223,13 +221,13 @@
 
     function renderSheet(ws){
       if(!ws) return;
-      // Build a table ourselves so we can attach cell addresses and support formula toggle.
       const ref = ws['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
       const table = document.createElement('table');
+
+      // Build head with corner + column letters
       const thead = document.createElement('thead');
       const trh = document.createElement('tr');
-      // corner
       const thCorner = document.createElement('th'); thCorner.className='firstcol'; trh.appendChild(thCorner);
       for(let C=range.s.c; C<=range.e.c; ++C){
         const th = document.createElement('th');
@@ -239,18 +237,25 @@
       thead.appendChild(trh);
       table.appendChild(thead);
 
+      // Build body
       const tbody = document.createElement('tbody');
       for(let R=range.s.r; R<=range.e.r; ++R){
         const tr = document.createElement('tr');
-        const rowHead = document.createElement('th'); rowHead.className='firstcol'; rowHead.textContent = (R+1); tr.appendChild(rowHead);
+        const rowHead = document.createElement('th');
+        rowHead.className='firstcol';
+        rowHead.textContent = (R+1);
+        tr.appendChild(rowHead);
+
         for(let C=range.s.c; C<=range.e.c; ++C){
           const addr = XLSX.utils.encode_cell({r:R,c:C});
           const td = document.createElement('td');
-          td.dataset.address = addr;
           const cell = ws[addr];
+          td.dataset.address = addr;
+
           if(cell){
             const txt = showForm.checked && cell.f ? ("="+cell.f) : XLSX.utils.format_cell(cell);
             td.textContent = txt;
+            td.title = cell.f ? ("="+cell.f) : (cell.v!==undefined ? String(cell.v) : txt); // tooltip with full content
             if(cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
           }else{
             td.textContent = '';
@@ -261,15 +266,15 @@
       }
       table.appendChild(tbody);
 
+      // Mount
       const wrap = document.getElementById('out');
       wrap.innerHTML = '';
       wrap.appendChild(table);
       currentHTMLTable = table;
 
-      // click-to-inspect
+      // interactions
       table.addEventListener('click', onCellClick, { once:true });
       table.addEventListener('click', onCellClick);
-      // apply any active filter
       applyFilter();
     }
 
@@ -308,35 +313,6 @@
       });
     }
 
-    function renderNames(){
-      const dst = document.getElementById('namesBody');
-      const names = (currentWB.Workbook && currentWB.Workbook.Names) || [];
-      if(!names.length){ dst.textContent = 'None detected.'; return; }
-      const ul = document.createElement('ul');
-      names.forEach(n=>{
-        const li = document.createElement('li');
-        li.innerHTML = `<code>${n.Name}</code> → <code>${n.Ref}</code>`;
-        ul.appendChild(li);
-      });
-      dst.innerHTML = ''; dst.appendChild(ul);
-    }
-
-    async function loadSources(){
-      // Try repo root SOURCES.md (landing page is at ../)
-      const cand = ["../SOURCES.md", "../../SOURCES.md"];
-      for(const url of cand){
-        try{
-          const r = await fetch(url, { cache:'no-store' });
-          if(r.ok){
-            const md = await r.text();
-            document.getElementById('sourcesBody').innerHTML = marked.parse(md);
-            return;
-          }
-        }catch(_){}
-      }
-      document.getElementById('sourcesBody').textContent = 'SOURCES.md not found.';
-    }
-
     // Deep-link support
     (function initFromQuery(){
       const params = new URLSearchParams(location.search);
@@ -360,4 +336,3 @@
   </script>
 </body>
 </html>
-
