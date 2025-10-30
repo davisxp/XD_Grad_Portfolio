@@ -25,13 +25,16 @@
     </label>
   </header>
   <div class="wrap" id="out">Loading…</div>
-  <div class="note">Tip: Put your .xlsx files in /excel. This page fetches them relative to the site, so pushes update instantly.</div>
+  <div class="note">Tip: Put your .xlsx files in <code>/models</code> (or update the paths below). This page fetches them relative to the site.</div>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
-    // List the files you want visible in the dropdown:
+    // Update these to match your repo exactly (case-sensitive):
     const files = [
-      { path: "..models/3_Statement_Model.xlsx", label: "3-Statement" },
+      { path: "models/3_Statement_Model.xlsx", label: "3-Statement" },
+      // { path: "models/03_DCF.xlsx", label: "DCF" },
+      // { path: "models/06_SOTP.xlsx", label: "SOTP" },
+      // { path: "models/07_rNPV.xlsx", label: "rNPV" },
     ];
 
     const fileSel = document.getElementById('file');
@@ -48,12 +51,14 @@
     async function loadWorkbook(path){
       out.textContent = "Loading…";
       sheetSel.innerHTML = "";
-      const res = await fetch(path);
-      if(!res.ok) throw new Error("Fetch failed: " + res.status);
+      const res = await fetch(path, { cache: "no-store" });
+      if(!res.ok) throw new Error("Fetch failed: " + res.status + " for " + path);
       const buf = await res.arrayBuffer();
       currentWB = XLSX.read(buf, { type: 'array' });
-      // populate sheet dropdown
-      currentWB.SheetNames.forEach((s, i) => {
+
+      // Populate sheet dropdown
+      sheetSel.innerHTML = "";
+      currentWB.SheetNames.forEach(s => {
         const opt = document.createElement('option');
         opt.value = s; opt.textContent = s;
         sheetSel.appendChild(opt);
@@ -68,11 +73,14 @@
       out.innerHTML = html;
     }
 
-    fileSel.addEventListener('change', () => loadWorkbook(fileSel.value).catch(e => out.textContent = e.message));
+    fileSel.addEventListener('change', () =>
+      loadWorkbook(fileSel.value).catch(e => out.textContent = e.message)
+    );
     sheetSel.addEventListener('change', () => renderSheet(sheetSel.value));
 
-    // initial load
+    // Initial load
     loadWorkbook(fileSel.value = files[0].path).catch(e => out.textContent = e.message);
   </script>
 </body>
 </html>
+
