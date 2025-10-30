@@ -1,8 +1,6 @@
 # **Xavier Davis — Life-Sciences Finance Portfolio**  
 Evidence pack showcasing prior work in valuation, modelling, and deal-structuring across healthcare and life-sciences sectors.
 
-> Repository: [github.com/davisxp/XD_Grad_Portfolio](https://github.com/davisxp/XD_Grad_Portfolio)
-
 ---
 
 ## Company of Focus — Smith & Nephew (LSE: SN.)
