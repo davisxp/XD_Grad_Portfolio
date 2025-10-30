@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Model Viewer</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial;margin:20px;line-height:1.4}
+    header{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    select{padding:6px 8px}
+    .wrap{max-width:100%;overflow:auto}
+    table{border-collapse:collapse;font-size:14px}
+    td,th{border:1px solid #ddd;padding:6px;white-space:nowrap}
+    .note{font-size:12px;color:#555;margin-top:8px}
+  </style>
+</head>
+<body>
+  <h1>Spreadsheet Preview</h1>
+  <header>
+    <label>Workbook:
+      <select id="file"></select>
+    </label>
+    <label>Sheet:
+      <select id="sheet"></select>
+    </label>
+  </header>
+  <div class="wrap" id="out">Loading…</div>
+  <div class="note">Tip: Put your .xlsx files in /excel. This page fetches them relative to the site, so pushes update instantly.</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    // List the files you want visible in the dropdown:
+    const files = [
+      { path: "..models\3_Statement_Model.xlsx", label: "3-Statement" },
+      { path: "../excel/03_DCF.xlsx",         label: "DCF" },
+      { path: "../excel/06_SOTP.xlsx",        label: "SOTP" },
+      { path: "../excel/07_rNPV.xlsx",        label: "rNPV" }
+    ];
+
+    const fileSel = document.getElementById('file');
+    const sheetSel = document.getElementById('sheet');
+    const out = document.getElementById('out');
+    let currentWB = null;
+
+    files.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.path; opt.textContent = f.label;
+      fileSel.appendChild(opt);
+    });
+
+    async function loadWorkbook(path){
+      out.textContent = "Loading…";
+      sheetSel.innerHTML = "";
+      const res = await fetch(path);
+      if(!res.ok) throw new Error("Fetch failed: " + res.status);
+      const buf = await res.arrayBuffer();
+      currentWB = XLSX.read(buf, { type: 'array' });
+      // populate sheet dropdown
+      currentWB.SheetNames.forEach((s, i) => {
+        const opt = document.createElement('option');
+        opt.value = s; opt.textContent = s;
+        sheetSel.appendChild(opt);
+      });
+      renderSheet(currentWB.SheetNames[0]);
+    }
+
+    function renderSheet(name){
+      if(!currentWB) return;
+      const ws = currentWB.Sheets[name];
+      const html = XLSX.utils.sheet_to_html(ws, { editable:false, id:"table" });
+      out.innerHTML = html;
+    }
+
+    fileSel.addEventListener('change', () => loadWorkbook(fileSel.value).catch(e => out.textContent = e.message));
+    sheetSel.addEventListener('change', () => renderSheet(sheetSel.value));
+
+    // initial load
+    loadWorkbook(fileSel.value = files[0].path).catch(e => out.textContent = e.message);
+  </script>
+</body>
+</html>
