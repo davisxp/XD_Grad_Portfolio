@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Model Viewer</title>
+  <meta property="og:title" content="Xavier Davis — Live Model Viewer">
+  <meta property="og:description" content="Interactive previews with formulae, inspector, and download.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#0b0c0f">
   <meta name="description" content="Live preview of portfolio spreadsheets with formula inspector" />
   <style>
     :root{
@@ -61,6 +65,8 @@
       border:1px solid var(--border); padding:6px 8px; vertical-align:top;
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; /* prevent spill */
     }
+	th, td { min-width: 0; }
+	td, th { overflow: hidden; text-overflow: ellipsis; }
     thead th{position:sticky; top:0; background:rgba(0,0,0,0.15); z-index:2}
     thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--border)}
     tbody th.firstcol{
@@ -91,13 +97,13 @@
 
     <div class="toolbar">
       <label class="pill">Workbook
-        <select id="file"></select>
+        <select id="file" aria-label="Sheet"></select>
       </label>
       <label class="pill">Sheet
         <select id="sheet"></select>
       </label>
-      <label class="pill"><input type="checkbox" id="showFormula"> Show formulae</label>
-      <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows"></label>
+	  <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
+	  <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
@@ -146,6 +152,8 @@
     const filterInp = document.getElementById('filter');
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
+	const MAX_R = 1500;   // max rows to render by default
+	const MAX_C = 80;     // max columns to render by default
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
 
@@ -224,6 +232,8 @@
       if(!ws) return;
       const ref = ws['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
+	  range.e.r = Math.min(range.e.r, MAX_R);
+	  range.e.c = Math.min(range.e.c, MAX_C);
       const table = document.createElement('table');
 
       // Build head with corner + column letters
@@ -233,6 +243,7 @@
       for(let C=range.s.c; C<=range.e.c; ++C){
         const th = document.createElement('th');
         th.textContent = XLSX.utils.encode_col(C);
+		th.setAttribute('scope', 'col');
         trh.appendChild(th);
       }
       thead.appendChild(trh);
@@ -245,6 +256,7 @@
         const rowHead = document.createElement('th');
         rowHead.className='firstcol';
         rowHead.textContent = (R+1);
+		rowHead.setAttribute('scope', 'row');
         tr.appendChild(rowHead);
 
         for(let C=range.s.c; C<=range.e.c; ++C){
