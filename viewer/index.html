@@ -1,85 +1,362 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Model Viewer</title>
+  <meta name="description" content="Live preview of portfolio spreadsheets with formula inspector" />
   <style>
-    body{font-family:system-ui,Segoe UI,Arial;margin:20px;line-height:1.4}
-    header{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-    select{padding:6px 8px}
-    .wrap{max-width:100%;overflow:auto}
-    table{border-collapse:collapse;font-size:14px}
-    td,th{border:1px solid #ddd;padding:6px;white-space:nowrap}
-    .note{font-size:12px;color:#555;margin-top:8px}
+    :root{
+      --bg:#0b0c0f; --panel:#141821; --muted:#7f8aa3; --border:#202636; --text:#e7eaf0; --accent:#5bb98b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans";
+    }
+    @media (prefers-color-scheme: light) {
+      :root{ --bg:#ffffff; --panel:#f7f8fb; --muted:#515f7a; --border:#e7eaf0; --text:#0b0c0f; --accent:#17664b; }
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:var(--sans); background:var(--bg); color:var(--text);
+      display:grid; grid-template-rows:auto 1fr;
+    }
+    header{
+      display:flex; gap:12px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--border);
+      background:linear-gradient(180deg, var(--panel), transparent 100%);
+      position:sticky; top:0; z-index:10;
+    }
+    h1{margin:0; font-size:16px; font-weight:600}
+    .spacer{flex:1}
+    .btn, select, input[type="text"]{
+      background:transparent; color:var(--text); border:1px solid var(--border); border-radius:10px;
+      padding:8px 10px; font-size:14px;
+    }
+    .btn:hover{border-color:var(--accent)}
+    .btn.primary{background:var(--accent); color:white; border-color:var(--accent)}
+    .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+    .pill{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px}
+    main{display:grid; grid-template-columns:1fr 320px; gap:14px; padding:14px; min-height:0}
+    aside{
+      border-left:1px solid var(--border); padding-left:14px;
+      display:flex; flex-direction:column; gap:12px; min-height:0;
+    }
+    .panel{
+      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      padding:12px; min-height:0;
+    }
+    .panel h2{margin:0 0 8px 0; font-size:14px}
+    .meta{color:var(--muted); font-size:12px}
+    #sheetWrap{background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0}
+    table{border-collapse:collapse; font-size:13px; font-family:var(--mono)}
+    th, td{border:1px solid var(--border); padding:6px 8px; white-space:nowrap; vertical-align:top}
+    thead th{position:sticky; top:0; background:rgba(0,0,0,0.15)}
+    tbody td.firstcol, thead th.firstcol{position:sticky; left:0; background:rgba(0,0,0,0.10)}
+    tbody tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+    .error{color:#e87d7d}
+    .kv{display:grid; grid-template-columns:110px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
+    .kv b{color:var(--muted); font-weight:600}
+    code{font-family:var(--mono); font-size:12px}
+    details summary{cursor:pointer; color:var(--muted)}
+    .hidden{display:none}
+    footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
+    @media (max-width: 980px) {
+      main{grid-template-columns:1fr}
+      aside{border-left:none; padding-left:0}
+    }
   </style>
 </head>
 <body>
-  <h1>Spreadsheet Preview</h1>
   <header>
-    <label>Workbook:
-      <select id="file"></select>
-    </label>
-    <label>Sheet:
-      <select id="sheet"></select>
-    </label>
+    <a class="btn" href="../">Back to landing page</a>
+    <h1>Live Spreadsheet Viewer</h1>
+    <div class="spacer"></div>
+
+    <div class="toolbar">
+      <label class="pill">Workbook
+        <select id="file"></select>
+      </label>
+      <label class="pill">Sheet
+        <select id="sheet"></select>
+      </label>
+      <label class="pill"><input type="checkbox" id="showFormula"> Show formulas</label>
+      <label class="pill">Filter <input id="filter" type="text" placeholder="Type to filter rows"></label>
+      <button class="btn" id="copyLink">Copy link</button>
+      <a class="btn primary" id="downloadLink" download>Download</a>
+    </div>
   </header>
-  <div class="wrap" id="out">Loading…</div>
-  <div class="note">Tip: Put your .xlsx files in <code>/models</code> (or update the paths below). This page fetches them relative to the site.</div>
+
+  <main>
+    <div id="sheetWrap"><div id="status" class="meta" style="padding:10px">Loading…</div><div id="out"></div></div>
+
+    <aside>
+      <div class="panel" id="inspector">
+        <h2>Cell inspector</h2>
+        <div class="meta">Click any cell to inspect value and formula.</div>
+        <div class="kv" id="cellInfo">
+          <b>Address</b><span>–</span>
+          <b>Value</b><span>–</span>
+          <b>Raw</b><span>–</span>
+          <b>Formula</b><span>–</span>
+          <b>Type</b><span>–</span>
+          <b>Format</b><span>–</span>
+          <b>Hyperlink</b><span>–</span>
+        </div>
+      </div>
+
+      <div class="panel" id="ranges">
+        <h2>Named ranges</h2>
+        <div class="meta">Workbook-level names</div>
+        <div id="namesBody" class="meta">None detected.</div>
+      </div>
+
+      <div class="panel" id="sources">
+        <h2>Sources</h2>
+        <div class="meta">Pulled from <code>SOURCES.md</code> if present.</div>
+        <div id="sourcesBody" class="meta">Looking for SOURCES.md…</div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    Tip: provide a “Summary” sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
+  </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
-    // Update these to match your repo exactly (case-sensitive):
+    // === Configure your workbooks (case-sensitive paths) ===
     const files = [
-      { path: "../models/3_Statement_Model.xlsx", label: "3-Statement" },
-      // { path: "../models/03_DCF.xlsx", label: "DCF" },
-      // { path: "../models/06_SOTP.xlsx", label: "SOTP" },
-      // { path: "../models/07_rNPV.xlsx", label: "rNPV" },
+      { path: "../models/3_Statement_Model.xlsx", label: "Smith & Nephew — 3-Statement" }
+      // { path: "../models/03_DCF.xlsx", label: "Smith & Nephew — DCF" },
+      // { path: "../models/06_SOTP.xlsx", label: "Smith & Nephew — SOTP" },
+      // { path: "../models/07_rNPV.xlsx", label: "Smith & Nephew — rNPV" }
     ];
+    // =======================================================
 
-    const fileSel = document.getElementById('file');
-    const sheetSel = document.getElementById('sheet');
-    const out = document.getElementById('out');
-    let currentWB = null;
+    const fileSel   = document.getElementById('file');
+    const sheetSel  = document.getElementById('sheet');
+    const out       = document.getElementById('out');
+    const statusEl  = document.getElementById('status');
+    const showForm  = document.getElementById('showFormula');
+    const filterInp = document.getElementById('filter');
+    const copyBtn   = document.getElementById('copyLink');
+    const dlLink    = document.getElementById('downloadLink');
 
+    let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
+
+    // populate file dropdown
     files.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.path; opt.textContent = f.label;
       fileSel.appendChild(opt);
     });
+    fileSel.value = files[0].path;
+
+    fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
+    sheetSel.addEventListener('change', () => {
+      const name = sheetSel.value;
+      if (!currentWB) return;
+      currentWS = currentWB.Sheets[name];
+      renderSheet(currentWS);
+      syncLink();
+    });
+    showForm.addEventListener('change', () => renderSheet(currentWS));
+    filterInp.addEventListener('input', () => applyFilter());
+
+    copyBtn.addEventListener('click', () => {
+      const short = (currentPath||"").split('/').pop();
+      const url = new URL(location.href);
+      url.searchParams.set('file', short);
+      url.searchParams.set('sheet', sheetSel.value);
+      url.searchParams.set('f', showForm.checked ? "1":"0");
+      navigator.clipboard.writeText(url.toString()).then(() => {
+        status(`Link copied`);
+      }).catch(() => status(`Could not copy link`));
+    });
+
+    function syncLink(){
+      dlLink.href = currentPath;
+      dlLink.textContent = 'Download ' + (files.find(f=>f.path===currentPath)?.label || 'workbook');
+    }
+
+    function status(t){ statusEl.textContent = t; }
 
     async function loadWorkbook(path){
-      out.textContent = "Loading…";
-      sheetSel.innerHTML = "";
-      const res = await fetch(path, { cache: "no-store" });
-      if(!res.ok) throw new Error("Fetch failed: " + res.status + " for " + path);
-      const buf = await res.arrayBuffer();
-      currentWB = XLSX.read(buf, { type: 'array' });
+      try{
+        currentPath = path;
+        status('Loading workbook…');
+        out.innerHTML = '';
+        sheetSel.innerHTML = '';
+        const res = await fetch(path, { cache: 'no-store' });
+        if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
+        const buf = await res.arrayBuffer();
+        currentWB = XLSX.read(buf, { type: 'array' });
 
-      // Populate sheet dropdown
-      sheetSel.innerHTML = "";
-      currentWB.SheetNames.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s; opt.textContent = s;
-        sheetSel.appendChild(opt);
+        // populate sheets
+        currentWB.SheetNames.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s; opt.textContent = s;
+          sheetSel.appendChild(opt);
+        });
+        // pick Summary if present, else first
+        const initial = currentWB.SheetNames.includes('Summary') ? 'Summary' : currentWB.SheetNames[0];
+        sheetSel.value = initial;
+        currentWS = currentWB.Sheets[initial];
+
+        // render
+        renderSheet(currentWS);
+        status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
+
+        // show workbook names
+        renderNames();
+
+        // attempt to load SOURCES.md from repo root
+        loadSources();
+
+        // reflect in download link
+        syncLink();
+      }catch(e){
+        out.innerHTML = `<div class="error">${e.message}</div>`;
+        status('Error loading workbook');
+      }
+    }
+
+    function renderSheet(ws){
+      if(!ws) return;
+      // Build a table ourselves so we can attach cell addresses and support formula toggle.
+      const ref = ws['!ref'] || 'A1:A1';
+      const range = XLSX.utils.decode_range(ref);
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const trh = document.createElement('tr');
+      // corner
+      const thCorner = document.createElement('th'); thCorner.className='firstcol'; trh.appendChild(thCorner);
+      for(let C=range.s.c; C<=range.e.c; ++C){
+        const th = document.createElement('th');
+        th.textContent = XLSX.utils.encode_col(C);
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      for(let R=range.s.r; R<=range.e.r; ++R){
+        const tr = document.createElement('tr');
+        const rowHead = document.createElement('th'); rowHead.className='firstcol'; rowHead.textContent = (R+1); tr.appendChild(rowHead);
+        for(let C=range.s.c; C<=range.e.c; ++C){
+          const addr = XLSX.utils.encode_cell({r:R,c:C});
+          const td = document.createElement('td');
+          td.dataset.address = addr;
+          const cell = ws[addr];
+          if(cell){
+            const txt = showForm.checked && cell.f ? ("="+cell.f) : XLSX.utils.format_cell(cell);
+            td.textContent = txt;
+            if(cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
+          }else{
+            td.textContent = '';
+          }
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+
+      const wrap = document.getElementById('out');
+      wrap.innerHTML = '';
+      wrap.appendChild(table);
+      currentHTMLTable = table;
+
+      // click-to-inspect
+      table.addEventListener('click', onCellClick, { once:true });
+      table.addEventListener('click', onCellClick);
+      // apply any active filter
+      applyFilter();
+    }
+
+    function onCellClick(ev){
+      const td = ev.target.closest('td');
+      if(!td || !td.dataset.address) return;
+      const addr = td.dataset.address;
+      const cell = currentWS[addr] || {};
+      const fmt  = XLSX.utils.format_cell(cell);
+      const info = {
+        Address: addr,
+        Value: fmt || '',
+        Raw: (cell.v!==undefined ? String(cell.v) : ''),
+        Formula: (cell.f ? "="+cell.f : ''),
+        Type: cell.t || '',
+        Format: cell.z || '',
+        Hyperlink: (cell.l && (cell.l.Target || cell.l.target)) ? (cell.l.Target || cell.l.target) : ''
+      };
+      const kv = document.getElementById('cellInfo');
+      kv.innerHTML = '';
+      Object.entries(info).forEach(([k,v])=>{
+        const b = document.createElement('b'); b.textContent = k;
+        const s = document.createElement('span'); s.textContent = v || '–';
+        kv.appendChild(b); kv.appendChild(s);
       });
-      renderSheet(currentWB.SheetNames[0]);
     }
 
-    function renderSheet(name){
-      if(!currentWB) return;
-      const ws = currentWB.Sheets[name];
-      const html = XLSX.utils.sheet_to_html(ws, { editable:false, id:"table" });
-      out.innerHTML = html;
+    function applyFilter(){
+      if(!currentHTMLTable) return;
+      const q = (filterInp.value||'').toLowerCase();
+      const rows = currentHTMLTable.querySelectorAll('tbody tr');
+      rows.forEach(row=>{
+        if(!q){ row.classList.remove('hidden'); return; }
+        const text = row.textContent.toLowerCase();
+        row.classList.toggle('hidden', !text.includes(q));
+      });
     }
 
-    fileSel.addEventListener('change', () =>
-      loadWorkbook(fileSel.value).catch(e => out.textContent = e.message)
-    );
-    sheetSel.addEventListener('change', () => renderSheet(sheetSel.value));
+    function renderNames(){
+      const dst = document.getElementById('namesBody');
+      const names = (currentWB.Workbook && currentWB.Workbook.Names) || [];
+      if(!names.length){ dst.textContent = 'None detected.'; return; }
+      const ul = document.createElement('ul');
+      names.forEach(n=>{
+        const li = document.createElement('li');
+        li.innerHTML = `<code>${n.Name}</code> → <code>${n.Ref}</code>`;
+        ul.appendChild(li);
+      });
+      dst.innerHTML = ''; dst.appendChild(ul);
+    }
 
-    // Initial load
-    loadWorkbook(fileSel.value = files[0].path).catch(e => out.textContent = e.message);
+    async function loadSources(){
+      // Try repo root SOURCES.md (landing page is at ../)
+      const cand = ["../SOURCES.md", "../../SOURCES.md"];
+      for(const url of cand){
+        try{
+          const r = await fetch(url, { cache:'no-store' });
+          if(r.ok){
+            const md = await r.text();
+            document.getElementById('sourcesBody').innerHTML = marked.parse(md);
+            return;
+          }
+        }catch(_){}
+      }
+      document.getElementById('sourcesBody').textContent = 'SOURCES.md not found.';
+    }
+
+    // Deep-link support
+    (function initFromQuery(){
+      const params = new URLSearchParams(location.search);
+      const qFile  = params.get('file');
+      const qSheet = params.get('sheet');
+      const qF     = params.get('f');
+      if(qF === '1') showForm.checked = true;
+
+      if(qFile){
+        const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
+        if(match) fileSel.value = match.path;
+      }
+      loadWorkbook(fileSel.value).then(()=>{
+        if(qSheet && currentWB.SheetNames.includes(qSheet)){
+          sheetSel.value = qSheet;
+          currentWS = currentWB.Sheets[qSheet];
+          renderSheet(currentWS);
+        }
+      });
+    })();
   </script>
 </body>
 </html>
