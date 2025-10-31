@@ -4,10 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Model Viewer</title>
-  <meta property="og:title" content="Xavier Davis — Live Model Viewer">
-  <meta property="og:description" content="Interactive previews with formulae, inspector, and download.">
-  <meta property="og:type" content="website">
-  <meta name="theme-color" content="#0b0c0f">
   <meta name="description" content="Live preview of portfolio spreadsheets with formula inspector" />
   <style>
     :root{
@@ -60,13 +56,11 @@
       border-collapse:collapse; font-size:13px; font-family:var(--mono);
       table-layout:fixed; min-width:100%;
     }
-	td { word-break: break-all; }
     th, td{
       border:1px solid var(--border); padding:6px 8px; vertical-align:top;
-      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; /* prevent spill */
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+      min-width:0;
     }
-	th, td { min-width: 0; }
-	td, th { overflow: hidden; text-overflow: ellipsis; }
     thead th{position:sticky; top:0; background:rgba(0,0,0,0.15); z-index:2}
     thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--border)}
     tbody th.firstcol{
@@ -88,6 +82,10 @@
       aside{border-left:none; padding-left:0}
     }
   </style>
+  <!-- Sheet parser -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Formula engine for live recalc -->
+  <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
 </head>
 <body>
   <header>
@@ -97,13 +95,16 @@
 
     <div class="toolbar">
       <label class="pill">Workbook
-        <select id="file" aria-label="Sheet"></select>
+        <select id="file" aria-label="Workbook"></select>
       </label>
       <label class="pill">Sheet
-        <select id="sheet"></select>
+        <select id="sheet" aria-label="Sheet"></select>
       </label>
-	  <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
-	  <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
+      <label class="pill">Scenario
+        <select id="scenario" aria-label="Scenario"></select>
+      </label>
+      <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
+      <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
@@ -115,7 +116,7 @@
     <aside>
       <div class="panel" id="inspector">
         <h2>Cell inspector</h2>
-        <div class="meta">Click any cell to inspect value and formula.</div>
+        <div class="meta">Click any cell to inspect value and formulae.</div>
         <div class="kv" id="cellInfo">
           <b>Address</b><span>–</span>
           <b>Value</b><span>–</span>
@@ -133,37 +134,48 @@
     Tip: provide a “Summary” sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
     // === Configure your workbooks (case-sensitive paths) ===
     const files = [
       { path: "../models/3_Statement_Model.xlsx", label: "Smith & Nephew — 3-Statement" },
-      { path: "../models/DCF_SN.xlsx", label: "Smith & Nephew — DCF" }
-      // { path: "../models/06_SOTP.xlsx", label: "Smith & Nephew — SOTP" },
-      // { path: "../models/07_rNPV.xlsx", label: "Smith & Nephew — rNPV" }
+      { path: "../models/DCF_SN.xlsx",         label: "Smith & Nephew — DCF" }
+      // { path: "../models/DCF_Model_Multiple.xlsx", label: "Smith & Nephew — DCF (Exit Multiple)" },
     ];
+    // === Scenario binding (EDIT THESE to match your model) ===
+    const SCENARIO = {
+      sheet: 'DCF',             // sheet that holds your scenario input
+      cell:  'G24',                  // input cell (e.g., data validation with Bear/Base/Bull)
+      options: ['Bear','Central','Bull']  // allowed values; must match your sheet logic
+    };
     // =======================================================
+
+    // Performance soft cap for enormous sheets
+    const MAX_R = 1500;   // rows
+    const MAX_C = 80;     // cols
 
     const fileSel   = document.getElementById('file');
     const sheetSel  = document.getElementById('sheet');
+    const scenarioSel = document.getElementById('scenario');
     const out       = document.getElementById('out');
     const statusEl  = document.getElementById('status');
     const showForm  = document.getElementById('showFormula');
     const filterInp = document.getElementById('filter');
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
-	const MAX_R = 1500;   // max rows to render by default
-	const MAX_C = 80;     // max columns to render by default
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
+    let hf = null;  // HyperFormula instance
+    const sheetOffsets = {}; // { [sheetName]: {r0, c0} }
 
-    // populate file dropdown
+    // Populate file + scenario dropdowns
     files.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.path; opt.textContent = f.label;
       fileSel.appendChild(opt);
     });
     fileSel.value = files[0].path;
+
+    scenarioSel.innerHTML = SCENARIO.options.map(v => `<option value="${v}">${v}</option>`).join('');
 
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
     sheetSel.addEventListener('change', () => {
@@ -182,9 +194,10 @@
       url.searchParams.set('file', short);
       url.searchParams.set('sheet', sheetSel.value);
       url.searchParams.set('f', showForm.checked ? "1":"0");
+      url.searchParams.set('sc', scenarioSel.value);
       navigator.clipboard.writeText(url.toString()).then(() => {
-        status(`Link copied`);
-      }).catch(() => status(`Could not copy link`));
+        status('Link copied');
+      }).catch(() => status('Could not copy link'));
     });
 
     function syncLink(){
@@ -205,35 +218,109 @@
         const buf = await res.arrayBuffer();
         currentWB = XLSX.read(buf, { type: 'array' });
 
-        // populate sheets
+        // Populate sheets
         currentWB.SheetNames.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s; opt.textContent = s;
           sheetSel.appendChild(opt);
         });
-        // pick Summary if present, else first
+        // Pick Summary if present, else first
         const initial = currentWB.SheetNames.includes('Summary') ? 'Summary' : currentWB.SheetNames[0];
         sheetSel.value = initial;
         currentWS = currentWB.Sheets[initial];
 
-        // render
+        // Build HyperFormula workbook from all sheets
+        buildHF();
+
+        // Initialise Scenario selector to current cell value, if possible
+        initScenarioFromHF();
+
+        // Render
         renderSheet(currentWS);
         status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
 
-        // reflect in download link
+        // Reflect in download link
         syncLink();
       }catch(e){
-        out.innerHTML = `<div class="error">${e.message}</div>`;
+        out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
         status('Error loading workbook');
       }
     }
 
+    function buildHF(){
+      if (!window.HyperFormula) { hf = null; return; }
+      if (hf && hf.destroy) hf.destroy();
+
+      const sheetsData = {};
+      for (const name of currentWB.SheetNames){
+        const ws = currentWB.Sheets[name];
+        const ref = ws['!ref'] || 'A1:A1';
+        const r = XLSX.utils.decode_range(ref);
+        const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
+        const aoa = Array.from({length: rows}, () => Array(cols).fill(null));
+        for (let R=r.s.r; R<=r.e.r; ++R){
+          for (let C=r.s.c; C<=r.e.c; ++C){
+            const addr = XLSX.utils.encode_cell({r:R,c:C});
+            const cell = ws[addr];
+            aoa[R - r.s.r][C - r.s.c] = cell
+              ? (cell.f ? ("=" + cell.f) : (cell.v ?? null))
+              : null;
+          }
+        }
+        sheetsData[name] = aoa;
+        sheetOffsets[name] = { r0: r.s.r, c0: r.s.c };
+      }
+
+      hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
+
+      // Wire scenario change → write to sheet and re-render
+      scenarioSel.onchange = () => {
+        try {
+          const id = hf.getSheetId(SCENARIO.sheet);
+          const {r,c} = XLSX.utils.decode_cell(SCENARIO.cell);
+          const {r0,c0} = sheetOffsets[SCENARIO.sheet] || {r0:0,c0:0};
+          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
+          renderSheet(currentWS);
+        } catch(e) {
+          status('Scenario update failed: ' + e.message);
+        }
+      };
+    }
+
+    function initScenarioFromHF(){
+      try {
+        if (!hf) return;
+        const id = hf.getSheetId(SCENARIO.sheet);
+        const {r,c} = XLSX.utils.decode_cell(SCENARIO.cell);
+        const {r0,c0} = sheetOffsets[SCENARIO.sheet] || {r0:0,c0:0};
+        const curVal = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
+        if (curVal != null) {
+          const s = String(curVal);
+          if (SCENARIO.options.includes(s)) scenarioSel.value = s;
+        }
+        // Also honour deep link ?sc=
+        const params = new URLSearchParams(location.search);
+        const qSc = params.get('sc');
+        if (qSc && SCENARIO.options.includes(qSc)) {
+          scenarioSel.value = qSc;
+          // push into HF
+          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
+        }
+      } catch(_) {}
+    }
+
     function renderSheet(ws){
       if(!ws) return;
+      const activeSheetName = sheetSel.value;
+      const activeSheetId = hf ? hf.getSheetId(activeSheetName) : null;
+
+      // Determine render range
       const ref = ws['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
-	  range.e.r = Math.min(range.e.r, MAX_R);
-	  range.e.c = Math.min(range.e.c, MAX_C);
+      const rowOffset = range.s.r, colOffset = range.s.c;
+      range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
+      range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
+
       const table = document.createElement('table');
 
       // Build head with corner + column letters
@@ -243,7 +330,7 @@
       for(let C=range.s.c; C<=range.e.c; ++C){
         const th = document.createElement('th');
         th.textContent = XLSX.utils.encode_col(C);
-		th.setAttribute('scope', 'col');
+        th.setAttribute('scope','col');
         trh.appendChild(th);
       }
       thead.appendChild(trh);
@@ -256,7 +343,7 @@
         const rowHead = document.createElement('th');
         rowHead.className='firstcol';
         rowHead.textContent = (R+1);
-		rowHead.setAttribute('scope', 'row');
+        rowHead.setAttribute('scope','row');
         tr.appendChild(rowHead);
 
         for(let C=range.s.c; C<=range.e.c; ++C){
@@ -265,14 +352,32 @@
           const cell = ws[addr];
           td.dataset.address = addr;
 
-          if(cell){
-            const txt = showForm.checked && cell.f ? ("="+cell.f) : XLSX.utils.format_cell(cell);
-            td.textContent = txt;
-            td.title = cell.f ? ("="+cell.f) : (cell.v!==undefined ? String(cell.v) : txt); // tooltip with full content
-            if(cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
-          }else{
-            td.textContent = '';
+          // Decide display text: formula (if toggled), else evaluated value via HyperFormula, else raw formatted cell
+          let displayText = '';
+          if (showForm.checked && cell && cell.f) {
+            displayText = "=" + cell.f;
+          } else if (hf && activeSheetId != null) {
+            const hfRow = R - rowOffset, hfCol = C - colOffset;
+            let val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
+            if (val === null || val === undefined) {
+              displayText = '';
+            } else if (cell && cell.z !== undefined) {
+              // try to use XLSX number format if present
+              try { displayText = XLSX.SSF.format(cell.z, val); }
+              catch { displayText = String(val); }
+            } else {
+              displayText = String(val);
+            }
+          } else {
+            displayText = cell ? XLSX.utils.format_cell(cell) : '';
           }
+
+          td.textContent = displayText;
+          // tooltip with full content or formula
+          td.title = (cell && cell.f) ? ("=" + cell.f)
+                   : (cell && cell.v !== undefined ? String(cell.v) : displayText);
+          if(cell && cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
+
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
@@ -280,12 +385,11 @@
       table.appendChild(tbody);
 
       // Mount
-      const wrap = document.getElementById('out');
-      wrap.innerHTML = '';
-      wrap.appendChild(table);
+      out.innerHTML = '';
+      out.appendChild(table);
       currentHTMLTable = table;
 
-      // interactions
+      // interactions (persistent)
       table.addEventListener('click', onCellClick);
       applyFilter();
     }
@@ -331,7 +435,10 @@
       const qFile  = params.get('file');
       const qSheet = params.get('sheet');
       const qF     = params.get('f');
+      const qSc    = params.get('sc');
       if(qF === '1') showForm.checked = true;
+
+      if (qSc && SCENARIO.options.includes(qSc)) scenarioSel.value = qSc;
 
       if(qFile){
         const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
