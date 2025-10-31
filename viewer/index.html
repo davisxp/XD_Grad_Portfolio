@@ -143,17 +143,16 @@
 
     // === Scenario binding (EDIT THESE to match your model) ===
     const SCENARIO = {
-      sheet: 'DCF',             // sheet that holds your scenario input
-      cell:  'G24',             // input cell (e.g., data validation with Bear/Base/Bull)
-      options: ['Bear','Central','Bull']  // allowed values; must match your sheet logic
+      sheet: 'DCF',                    // sheet that holds your scenario input
+      cell:  'G24',                    // input cell (e.g., Bear/Central/Bull)
+      options: ['Bear','Central','Bull']
     };
 
     // === Cross-workbook support: list external files referenced by formulas ===
-    const LINKED_FILES = ["../models/3_Statement_Model.xlsx"]; // add more paths if needed
+    const LINKED_FILES = ["../models/3_Statement_Model.xlsx"];
 
     // Performance soft cap for enormous sheets
-    const MAX_R = 1500;   // rows
-    const MAX_C = 80;     // cols
+    const MAX_R = 1500, MAX_C = 80;
 
     const fileSel   = document.getElementById('file');
     const sheetSel  = document.getElementById('sheet');
@@ -167,7 +166,8 @@
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
     let hf = null;  // HyperFormula instance
-    const sheetOffsets = {}; // { [sheetName]: {r0, c0} }
+    const sheetOffsets = {};      // { [sheetName]: {r0, c0} }
+    const date1904BySheet = {};   // { [sheetName]: boolean }
 
     // Populate file + scenario dropdowns
     files.forEach(f => {
@@ -176,7 +176,6 @@
       fileSel.appendChild(opt);
     });
     fileSel.value = files[0].path;
-
     scenarioSel.innerHTML = SCENARIO.options.map(v => `<option value="${v}">${v}</option>`).join('');
 
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
@@ -206,12 +205,15 @@
       dlLink.href = currentPath;
       dlLink.textContent = 'Download ' + (files.find(f=>f.path===currentPath)?.label || 'workbook');
     }
-
     function status(t){ statusEl.textContent = t; }
 
     // Remove [Workbook.xlsx] qualifiers from formulas so HF can resolve cross-sheet refs
     function stripBookRefs(formula) {
       return formula.replace(/\[[^\]]+\]/g, '');
+    }
+    // Heuristic: does a number format look like a date/time?
+    function isDateFmt(fmt){
+      return typeof fmt === 'string' && /[dyhs]/i.test(fmt); // crude but effective
     }
 
     async function loadWorkbook(path){
@@ -224,6 +226,9 @@
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
         currentWB = XLSX.read(buf, { type: 'array' });
+
+        // Load this workbook's number formats into SSF
+        if (currentWB && currentWB.SSF) XLSX.SSF.load(currentWB.SSF);
 
         // Populate sheets
         currentWB.SheetNames.forEach(s => {
@@ -265,11 +270,15 @@
         const res = await fetch(p, { cache: 'no-store' });
         if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${p}`);
         const buf = await res.arrayBuffer();
-        workbooks.push({ path: p, wb: XLSX.read(buf, { type: 'array' }) });
+        const wb = XLSX.read(buf, { type: 'array' });
+        // Merge number formats from linked files too
+        if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
+        workbooks.push({ path: p, wb });
       }
 
       const sheetsData = {};
-      for (const { path, wb } of workbooks) {
+      for (const { wb } of workbooks) {
+        const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
           const ref = ws['!ref'] || 'A1:A1';
@@ -288,10 +297,10 @@
               }
             }
           }
-          // NOTE: assumes sheet names are unique across files.
-          const key = name;
+          const key = name; // assumes unique sheet names
           sheetsData[key] = aoa;
           sheetOffsets[key] = { r0: r.s.r, c0: r.s.c };
+          date1904BySheet[key] = date1904;
         }
       }
 
@@ -383,15 +392,21 @@
             const hfRow = R - rowOffset, hfCol = C - colOffset;
             let val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
 
-            // Fallback for HF errors (e.g., unresolved cross-file refs): show Excel's cached value
+            // If HF threw an error (e.g., unresolved ref), fall back to Excel's cached formatting
             const isHFError = val && typeof val === 'object' && 'type' in val;
             if (isHFError) {
               displayText = cell ? XLSX.utils.format_cell(cell) : '';
             } else if (val === null || val === undefined) {
               displayText = '';
             } else if (cell && cell.z !== undefined) {
-              try { displayText = XLSX.SSF.format(cell.z, val); }
-              catch { displayText = String(val); }
+              // Use the cell's Excel number format
+              try {
+                let v = val;
+                if (isDateFmt(cell.z) && date1904BySheet[activeSheetName]) v = Number(v) + 1462; // adjust 1904 dates
+                displayText = XLSX.SSF.format(cell.z, v);
+              } catch {
+                displayText = String(val);
+              }
             } else {
               displayText = String(val);
             }
