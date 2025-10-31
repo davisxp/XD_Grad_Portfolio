@@ -138,16 +138,18 @@
     // === Configure your workbooks (case-sensitive paths) ===
     const files = [
       { path: "../models/3_Statement_Model.xlsx", label: "Smith & Nephew — 3-Statement" },
-      { path: "../models/DCF_SN.xlsx",         label: "Smith & Nephew — DCF" }
-      // { path: "../models/DCF_Model_Multiple.xlsx", label: "Smith & Nephew — DCF (Exit Multiple)" },
+      { path: "../models/DCF_SN.xlsx",            label: "Smith & Nephew — DCF" }
     ];
+
     // === Scenario binding (EDIT THESE to match your model) ===
     const SCENARIO = {
       sheet: 'DCF',             // sheet that holds your scenario input
-      cell:  'G24',                  // input cell (e.g., data validation with Bear/Base/Bull)
+      cell:  'G24',             // input cell (e.g., data validation with Bear/Base/Bull)
       options: ['Bear','Central','Bull']  // allowed values; must match your sheet logic
     };
-    // =======================================================
+
+    // === Cross-workbook support: list external files referenced by formulas ===
+    const LINKED_FILES = ["../models/3_Statement_Model.xlsx"]; // add more paths if needed
 
     // Performance soft cap for enormous sheets
     const MAX_R = 1500;   // rows
@@ -207,6 +209,11 @@
 
     function status(t){ statusEl.textContent = t; }
 
+    // Remove [Workbook.xlsx] qualifiers from formulas so HF can resolve cross-sheet refs
+    function stripBookRefs(formula) {
+      return formula.replace(/\[[^\]]+\]/g, '');
+    }
+
     async function loadWorkbook(path){
       try{
         currentPath = path;
@@ -229,8 +236,8 @@
         sheetSel.value = initial;
         currentWS = currentWB.Sheets[initial];
 
-        // Build HyperFormula workbook from all sheets
-        buildHF();
+        // Build HyperFormula workbook from active + linked files
+        await buildHF();
 
         // Initialise Scenario selector to current cell value, if possible
         initScenarioFromHF();
@@ -247,28 +254,45 @@
       }
     }
 
-    function buildHF(){
+    async function buildHF(){
       if (!window.HyperFormula) { hf = null; return; }
       if (hf && hf.destroy) hf.destroy();
 
+      // fetch and parse current + linked workbooks
+      const paths = [currentPath, ...LINKED_FILES.filter(p => p !== currentPath)];
+      const workbooks = [];
+      for (const p of paths) {
+        const res = await fetch(p, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${p}`);
+        const buf = await res.arrayBuffer();
+        workbooks.push({ path: p, wb: XLSX.read(buf, { type: 'array' }) });
+      }
+
       const sheetsData = {};
-      for (const name of currentWB.SheetNames){
-        const ws = currentWB.Sheets[name];
-        const ref = ws['!ref'] || 'A1:A1';
-        const r = XLSX.utils.decode_range(ref);
-        const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
-        const aoa = Array.from({length: rows}, () => Array(cols).fill(null));
-        for (let R=r.s.r; R<=r.e.r; ++R){
-          for (let C=r.s.c; C<=r.e.c; ++C){
-            const addr = XLSX.utils.encode_cell({r:R,c:C});
-            const cell = ws[addr];
-            aoa[R - r.s.r][C - r.s.c] = cell
-              ? (cell.f ? ("=" + cell.f) : (cell.v ?? null))
-              : null;
+      for (const { path, wb } of workbooks) {
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const ref = ws['!ref'] || 'A1:A1';
+          const r = XLSX.utils.decode_range(ref);
+          const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
+          const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
+          for (let R=r.s.r; R<=r.e.r; ++R){
+            for (let C=r.s.c; C<=r.e.c; ++C){
+              const addr = XLSX.utils.encode_cell({r:R,c:C});
+              const cell = ws[addr];
+              if (!cell) continue;
+              if (cell.f) {
+                aoa[R - r.s.r][C - r.s.c] = "=" + stripBookRefs(cell.f);
+              } else {
+                aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
+              }
+            }
           }
+          // NOTE: assumes sheet names are unique across files.
+          const key = name;
+          sheetsData[key] = aoa;
+          sheetOffsets[key] = { r0: r.s.r, c0: r.s.c };
         }
-        sheetsData[name] = aoa;
-        sheetOffsets[name] = { r0: r.s.r, c0: r.s.c };
       }
 
       hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
@@ -298,12 +322,11 @@
           const s = String(curVal);
           if (SCENARIO.options.includes(s)) scenarioSel.value = s;
         }
-        // Also honour deep link ?sc=
+        // Honour deep link ?sc=
         const params = new URLSearchParams(location.search);
         const qSc = params.get('sc');
         if (qSc && SCENARIO.options.includes(qSc)) {
           scenarioSel.value = qSc;
-          // push into HF
           hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
         }
       } catch(_) {}
@@ -355,14 +378,18 @@
           // Decide display text: formula (if toggled), else evaluated value via HyperFormula, else raw formatted cell
           let displayText = '';
           if (showForm.checked && cell && cell.f) {
-            displayText = "=" + cell.f;
+            displayText = "=" + (cell.f || '');
           } else if (hf && activeSheetId != null) {
             const hfRow = R - rowOffset, hfCol = C - colOffset;
             let val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
-            if (val === null || val === undefined) {
+
+            // Fallback for HF errors (e.g., unresolved cross-file refs): show Excel's cached value
+            const isHFError = val && typeof val === 'object' && 'type' in val;
+            if (isHFError) {
+              displayText = cell ? XLSX.utils.format_cell(cell) : '';
+            } else if (val === null || val === undefined) {
               displayText = '';
             } else if (cell && cell.z !== undefined) {
-              // try to use XLSX number format if present
               try { displayText = XLSX.SSF.format(cell.z, val); }
               catch { displayText = String(val); }
             } else {
