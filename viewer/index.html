@@ -144,7 +144,7 @@
     // === Scenario binding (EDIT THESE to match your model) ===
     const SCENARIO = {
       sheet: 'DCF',                    // sheet that holds your scenario input
-      cell:  'G24',                    // input cell (e.g., Bear/Central/Bull)
+      targets: ['G24', 'J34'],         // write to BOTH cells
       options: ['Bear','Central','Bull']
     };
 
@@ -251,6 +251,26 @@
         : String(val);
     }
 
+    // === Scenario helpers: write/read both target cells ===
+    function setScenarioInHF(value){
+      const id = hf.getSheetId(SCENARIO.sheet);
+      const { r0, c0 } = sheetOffsets[SCENARIO.sheet] || { r0: 0, c0: 0 };
+      SCENARIO.targets.forEach(addr => {
+        const { r, c } = XLSX.utils.decode_cell(addr);
+        hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
+      });
+    }
+    function readScenarioFromHF(){
+      const id = hf.getSheetId(SCENARIO.sheet);
+      const { r0, c0 } = sheetOffsets[SCENARIO.sheet] || { r0: 0, c0: 0 };
+      for (const addr of SCENARIO.targets){
+        const { r, c } = XLSX.utils.decode_cell(addr);
+        const v = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
+        if (v != null) return String(v);
+      }
+      return null;
+    }
+
     async function loadWorkbook(path){
       try{
         currentPath = path;
@@ -341,13 +361,10 @@
 
       hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
 
-      // Wire scenario change → write to sheet and re-render
+      // Wire scenario change → write to BOTH cells and re-render
       scenarioSel.onchange = () => {
         try {
-          const id = hf.getSheetId(SCENARIO.sheet);
-          const {r,c} = XLSX.utils.decode_cell(SCENARIO.cell);
-          const {r0,c0} = sheetOffsets[SCENARIO.sheet] || {r0:0,c0:0};
-          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
+          setScenarioInHF(scenarioSel.value);
           renderSheet(currentWS);
           status('Scenario updated');
         } catch(e) {
@@ -359,20 +376,17 @@
     function initScenarioFromHF(){
       try {
         if (!hf) return;
-        const id = hf.getSheetId(SCENARIO.sheet);
-        const {r,c} = XLSX.utils.decode_cell(SCENARIO.cell);
-        const {r0,c0} = sheetOffsets[SCENARIO.sheet] || {r0:0,c0:0};
-        const curVal = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
-        if (curVal != null) {
-          const s = String(curVal);
-          if (SCENARIO.options.includes(s)) scenarioSel.value = s;
-        }
+
+        // pull current value from either target cell
+        const curVal = readScenarioFromHF();
+        if (curVal && SCENARIO.options.includes(curVal)) scenarioSel.value = curVal;
+
         // Honour deep link ?sc=
         const params = new URLSearchParams(location.search);
         const qSc = params.get('sc');
         if (qSc && SCENARIO.options.includes(qSc)) {
           scenarioSel.value = qSc;
-          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
+          setScenarioInHF(qSc);
         }
       } catch(_) {}
     }
