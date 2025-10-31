@@ -213,7 +213,42 @@
     }
     // Heuristic: does a number format look like a date/time?
     function isDateFmt(fmt){
-      return typeof fmt === 'string' && /[dyhs]/i.test(fmt); // crude but effective
+      return typeof fmt === 'string' && /[dyhs]/i.test(fmt);
+    }
+    // Format an HF-evaluated value using the source cell's formatting where possible,
+    // and fall back to a formatter derived from the saved display text (cell.w)
+    function formatUsingCell(val, cell, sheetName){
+      if (val === null || val === undefined) return '';
+      // HF error object → show Excel's cached display (keeps the UI clean)
+      if (val && typeof val === 'object' && 'type' in val) {
+        return cell ? XLSX.utils.format_cell(cell) : '';
+      }
+      // Prefer explicit Excel number format if present
+      if (cell && cell.z !== undefined) {
+        try{
+          let v = val;
+          if (isDateFmt(cell.z) && date1904BySheet[sheetName]) v = Number(v) + 1462; // 1904 system
+          return XLSX.SSF.format(cell.z, v);
+        }catch{}
+      }
+      // Derive a formatter from the saved display text (cell.w)
+      if (cell && typeof val === 'number' && typeof cell.w === 'string' && cell.w.trim()){
+        const w = cell.w;
+        const hasPct = /%/.test(w);
+        const hasGBP = /£/.test(w);
+        const mDec   = w.match(/\.([0-9]+)/);
+        const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
+        const useGrouping = /,/.test(w) || Math.abs(val) >= 1000;
+        const opts = { maximumFractionDigits: decimals, minimumFractionDigits: decimals, useGrouping };
+        let num = val;
+        if (hasGBP){ opts.style = 'currency'; opts.currency = 'GBP'; }
+        if (hasPct){ opts.style = 'percent'; }
+        try{ return new Intl.NumberFormat('en-GB', opts).format(num); }catch{}
+      }
+      // Sensible default
+      return (typeof val === 'number')
+        ? new Intl.NumberFormat('en-GB').format(val)
+        : String(val);
     }
 
     async function loadWorkbook(path){
@@ -314,6 +349,7 @@
           const {r0,c0} = sheetOffsets[SCENARIO.sheet] || {r0:0,c0:0};
           hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioSel.value]]);
           renderSheet(currentWS);
+          status('Scenario updated');
         } catch(e) {
           status('Scenario update failed: ' + e.message);
         }
@@ -384,32 +420,14 @@
           const cell = ws[addr];
           td.dataset.address = addr;
 
-          // Decide display text: formula (if toggled), else evaluated value via HyperFormula, else raw formatted cell
+          // Decide display text: formula (if toggled), else evaluated value via HF (formatted), else Excel's cached display
           let displayText = '';
           if (showForm.checked && cell && cell.f) {
             displayText = "=" + (cell.f || '');
           } else if (hf && activeSheetId != null) {
             const hfRow = R - rowOffset, hfCol = C - colOffset;
-            let val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
-
-            // If HF threw an error (e.g., unresolved ref), fall back to Excel's cached formatting
-            const isHFError = val && typeof val === 'object' && 'type' in val;
-            if (isHFError) {
-              displayText = cell ? XLSX.utils.format_cell(cell) : '';
-            } else if (val === null || val === undefined) {
-              displayText = '';
-            } else if (cell && cell.z !== undefined) {
-              // Use the cell's Excel number format
-              try {
-                let v = val;
-                if (isDateFmt(cell.z) && date1904BySheet[activeSheetName]) v = Number(v) + 1462; // adjust 1904 dates
-                displayText = XLSX.SSF.format(cell.z, v);
-              } catch {
-                displayText = String(val);
-              }
-            } else {
-              displayText = String(val);
-            }
+            const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
+            displayText = formatUsingCell(val, cell, activeSheetName);
           } else {
             displayText = cell ? XLSX.utils.format_cell(cell) : '';
           }
