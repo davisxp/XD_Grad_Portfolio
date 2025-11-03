@@ -98,8 +98,8 @@ Status of each module (✔ complete, ⏳ in progress, □ to do):
 
 - ✔ **Three Statements** — complete  
 - ✔ **DCF (multiples and perpetuity)** — complete  
-- ⏳ **SOTP** — in progress  
-- □ **rNPV** — to do  
+- ✔ **SOTP** — complete 
+- ⏳ **rNPV** — in progress
 - □ **Comparables and Precedents Valuation** — to do  
 - □ **Merger Accretion Dilution** — to do  
 - □ **LBO** — to do  
