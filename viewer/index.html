@@ -11,10 +11,10 @@
       --grid: var(--border);
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       --sans: Calibri, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", system-ui, -apple-system;
-      --cellw: 180px;       /* default column width */
-      --rowheadw: 64px;     /* row-header width */
+      --cellw: 180px;  /* fallback column width */
+      --rowheadw: 64px;/* row-header width */
+      --sheet-scale: 1;/* zoom scale */
     }
-    /* Excel-look theme (permanently ON) */
     body.excel{
       --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#d6d9df; --grid:#e3e6eb; --text:#1e1e1e; --accent:#17664b;
     }
@@ -52,10 +52,11 @@
     .panel h2{margin:0 0 8px 0; font-size:14px}
     .meta{color:var(--muted); font-size:12px}
     #sheetWrap{
-      background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0
+      background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0;
+      font-size: calc(13px * var(--sheet-scale)); /* Zoom applies to sheet only */
     }
     table{
-      border-collapse:separate; border-spacing:0; font-size:13px; font-family:var(--sans);
+      border-collapse:separate; border-spacing:0; font-size:1em; font-family:var(--sans);
       table-layout:fixed; min-width:100%; background:var(--panel);
     }
     th, td{
@@ -63,15 +64,22 @@
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
       background-clip: padding-box;
     }
-    thead th{position:sticky; top:0; background:#f4f6f8; z-index:2}
-    thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--grid)}
+    /* Sticky top row and left column (+ proper corner) */
+    thead th{position:sticky; top:0; background:#f4f6f8; z-index:4}
+    thead th.firstcol{left:0; z-index:5; box-shadow:2px 0 0 0 var(--grid)}
+    thead th.corner{left:0; top:0; z-index:6} /* top-left cell */
     tbody th.firstcol{
-      position:sticky; left:0; background:#fafbfc; z-index:1; box-shadow:2px 0 0 0 var(--grid)
+      position:sticky; left:0; background:#fafbfc; z-index:3; box-shadow:2px 0 0 0 var(--grid)
     }
-    /* Column sizing fallback */
+    /* Fallback widths if no Excel width present */
     thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
     thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
     tbody tr:nth-child(even) td{ background:rgba(0,0,0,0.01) }
+
+    /* Precedent highlight + focus ring */
+    td.hl { box-shadow: inset 0 0 0 2px rgba(43,124,255,.65); background-color: rgba(43,124,255,.08); }
+    table td:focus{ outline:2px solid #2b7cff; outline-offset:-2px }
+
     .error{color:#e87d7d}
     .kv{display:grid; grid-template-columns:120px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
     .kv b{color:var(--muted); font-weight:600}
@@ -80,12 +88,15 @@
     .hidden{display:none}
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
     @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
+    @media print{
+      header, aside, footer { display:none !important; }
+      main { grid-template-columns: 1fr; padding:0; }
+      #sheetWrap { border:none; }
+      table { font-size:12px; }
+    }
   </style>
-  <!-- Sheet parser -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- Formula engine for live recalc -->
   <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
-  <!-- Tiny unzipper to read styles.xml for real Excel colours/fonts/borders -->
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
 </head>
 <body class="excel">
@@ -106,13 +117,28 @@
       </label>
       <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
       <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
+
+      <!-- 1) Zoom control -->
+      <label class="pill">Zoom
+        <select id="zoom">
+          <option value="0.9">90%</option>
+          <option value="1" selected>100%</option>
+          <option value="1.1">110%</option>
+        </select>
+      </label>
+
+      <!-- 2) Go to cell -->
+      <label class="pill">Go to
+        <input id="goto" type="text" placeholder="e.g. B28" size="6" aria-label="Go to cell">
+      </label>
+
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
   </header>
 
   <main>
-    <div id="sheetWrap"><div id="status" class="meta" style="padding:10px">Loading…</div><div id="out"></div></div>
+    <div id="sheetWrap"><div id="status" class="meta" aria-live="polite" style="padding:10px">Loading…</div><div id="out"></div></div>
 
     <aside>
       <div class="panel" id="inspector">
@@ -165,6 +191,8 @@
     const filterInp = document.getElementById('filter');
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
+    const zoomSel   = document.getElementById('zoom');
+    const gotoInp   = document.getElementById('goto');
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
     let hf = null;  // HyperFormula instance
@@ -181,10 +209,15 @@
     fileSel.value = files[0].path;
     scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join('');
 
+    // 1) Zoom
+    zoomSel.addEventListener('change', () =>
+      document.documentElement.style.setProperty('--sheet-scale', zoomSel.value)
+    );
+
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
     sheetSel.addEventListener('change', () => {
-      const name = sheetSel.value;
       if (!currentWB) return;
+      const name = sheetSel.value;
       currentWS = currentWB.Sheets[name];
       renderSheet(currentWS);
       syncLink();
@@ -236,7 +269,7 @@
       return (typeof val === 'number') ? new Intl.NumberFormat('en-GB').format(val) : String(val);
     }
 
-    // === Scenario helpers: write/read across all bound cells ===
+    // Scenario helpers
     function setScenarioInHF(value){
       SCENARIOS.forEach(({sheet, targets}) => {
         const id = hf.getSheetId(sheet);
@@ -260,7 +293,7 @@
       return null;
     }
 
-    // === Parse Excel styles and per-cell style indices from the XLSX buffer ===
+    // Excel styles parsing (styles.xml)
     async function extractStylesFromXLSX(arrayBuffer){
       try{
         const bytes = new Uint8Array(arrayBuffer);
@@ -275,7 +308,6 @@
 
         const parse = (xml) => (new DOMParser()).parseFromString(xml, 'application/xml');
 
-        // Parse styles.xml
         const sdoc = parse(stylesXml);
         const fonts = Array.from(sdoc.getElementsByTagName('fonts')[0]?.getElementsByTagName('font') || []).map(n => {
           const bold = !!n.getElementsByTagName('b')[0];
@@ -283,7 +315,7 @@
           const sz = n.getElementsByTagName('sz')[0]?.getAttribute('val');
           const name = n.getElementsByTagName('name')[0]?.getAttribute('val');
           const col = n.getElementsByTagName('color')[0];
-          const rgb = col?.getAttribute('rgb'); // ARGB like FF112233
+          const rgb = col?.getAttribute('rgb');
           const color = rgb ? ('#'+rgb.slice(-6)) : null;
           return { bold, italic, sz: sz? parseFloat(sz):null, name, color };
         });
@@ -295,11 +327,6 @@
           const rgb = fg?.getAttribute('rgb');
           const color = (ptype === 'solid' && rgb) ? ('#'+rgb.slice(-6)) : null;
           return { color };
-        });
-
-        const borders = Array.from(sdoc.getElementsByTagName('borders')[0]?.getElementsByTagName('border') || []).map(n => {
-          const has = ['left','right','top','bottom'].some(s => n.getElementsByTagName(s)[0]?.getAttribute('style'));
-          return { has };
         });
 
         const xfs = Array.from(sdoc.getElementsByTagName('cellXfs')[0]?.getElementsByTagName('xf') || []).map(xf => {
@@ -315,7 +342,7 @@
           return { fontId, fillId, borderId, alignment };
         });
 
-        // Map sheet name -> sheet xml path
+        // workbook + rels to find sheet xml paths
         const wdoc = parse(wbXml);
         const sheets = Array.from(wdoc.getElementsByTagName('sheet')).map(s => ({
           name: s.getAttribute('name'),
@@ -332,7 +359,6 @@
           if (tgt) sheetPathByName[s.name] = 'xl/' + tgt.replace(/^\//,'');
         });
 
-        // For each sheet, map cell address -> style xf id (from <c s="N">)
         const sheetCellXf = {};
         for (const [sheetName, pth] of Object.entries(sheetPathByName)){
           const entry = zip[pth];
@@ -343,14 +369,14 @@
           const map = {};
           for (let i=0;i<cells.length;i++){
             const c = cells[i];
-            const r = c.getAttribute('r'); // e.g., "A1"
+            const r = c.getAttribute('r');
             const s = c.getAttribute('s');
             if (r && s) map[r] = parseInt(s,10);
           }
           sheetCellXf[sheetName] = map;
         }
 
-        return { fonts, fills, borders, xfs, sheetCellXf };
+        return { fonts, fills, xfs, sheetCellXf };
       }catch(_){
         return null;
       }
@@ -365,7 +391,7 @@
       const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
       if (fill && fill.color) td.style.backgroundColor = fill.color;
       // Font
-      const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
+      const font = (xf.fontId != null) ? styleCtx.fonts?.[xf.fontId] : null;
       if (font){
         if (font.bold) td.style.fontWeight = '700';
         if (font.italic) td.style.fontStyle = 'italic';
@@ -401,14 +427,11 @@
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
 
-        // Parse with SheetJS for data + formulas
         currentWB = XLSX.read(buf, { type: 'array' });
         if (currentWB && currentWB.SSF) XLSX.SSF.load(currentWB.SSF);
 
-        // Extract real Excel styles/xf indices from the raw zip (current workbook only)
         styleCtx = await extractStylesFromXLSX(buf);
 
-        // Populate sheets
         currentWB.SheetNames.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s; opt.textContent = s;
@@ -418,13 +441,9 @@
         sheetSel.value = initial;
         currentWS = currentWB.Sheets[initial];
 
-        // Build HyperFormula model (current + linked files)
         await buildHF();
-
-        // Scenario init
         initScenarioFromHF();
 
-        // Render
         renderSheet(currentWS);
         status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
         syncLink();
@@ -506,14 +525,12 @@
       const activeSheetName = sheetSel.value;
       const activeSheetId = hf ? hf.getSheetId(activeSheetName) : null;
 
-      // Range + merges + column widths + row heights
       const ref = ws['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
       const rowOffset = range.s.r, colOffset = range.s.c;
       range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
       range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
 
-      // Merges
       const merges = ws['!merges'] || [];
       const mergeTopLeft = new Map();
       const covered = new Set();
@@ -529,12 +546,10 @@
         }
       });
 
-      // Column widths
       const colMeta = ws['!cols'] || [];
       const colWidthPx = [];
       for(let C=range.s.c; C<=range.e.c; ++C){
-        const width = pxFromCol(colMeta[C]);
-        colWidthPx[C] = width; // may be null
+        colWidthPx[C] = pxFromCol(colMeta[C]); // may be null
       }
 
       const table = document.createElement('table');
@@ -542,7 +557,7 @@
       // Head
       const thead = document.createElement('thead');
       const trh = document.createElement('tr');
-      const thCorner = document.createElement('th'); thCorner.className='firstcol'; trh.appendChild(thCorner);
+      const thCorner = document.createElement('th'); thCorner.className='firstcol corner'; trh.appendChild(thCorner);
       for(let C=range.s.c; C<=range.e.c; ++C){
         const th = document.createElement('th');
         th.textContent = XLSX.utils.encode_col(C);
@@ -561,127 +576,4 @@
       for(let R=range.s.r; R<=range.e.r; ++R){
         const tr = document.createElement('tr');
         const rmeta = rowMeta[R];
-        if (rmeta && (rmeta.hpx || rmeta.hpt)){
-          const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt*96/72);
-          tr.style.height = h + 'px';
-        }
-
-        const rowHead = document.createElement('th');
-        rowHead.className='firstcol';
-        rowHead.textContent = (R+1);
-        rowHead.setAttribute('scope','row');
-        tr.appendChild(rowHead);
-
-        for(let C=range.s.c; C<=range.e.c; ++C){
-          const addr = XLSX.utils.encode_cell({r:R,c:C});
-          if (covered.has(addr)) continue;
-
-          const td = document.createElement('td');
-          const cell = ws[addr];
-          td.dataset.address = addr;
-
-          // Merge span if top-left
-          const m = mergeTopLeft.get(addr);
-          if (m){ if (m.rowspan>1) td.rowSpan = m.rowspan; if (m.colspan>1) td.colSpan = m.colspan; }
-
-          // Width
-          const wpx = colWidthPx[C];
-          if (wpx){ td.style.width = wpx+'px'; td.style.maxWidth = wpx+'px'; }
-
-          // Display text
-          let displayText = '';
-          if (showForm.checked && cell && cell.f) {
-            displayText = "=" + (cell.f || '');
-          } else if (hf && activeSheetId != null) {
-            const hfRow = R - rowOffset, hfCol = C - colOffset;
-            const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
-            displayText = formatUsingCell(val, cell, activeSheetName);
-          } else {
-            displayText = cell ? XLSX.utils.format_cell(cell) : '';
-          }
-
-          td.textContent = displayText;
-          td.title = (cell && cell.f) ? ("=" + cell.f)
-                   : (cell && cell.v !== undefined ? String(cell.v) : displayText);
-          if(cell && cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
-
-          // Apply Excel visual style (font/fill/alignment) if available
-          applyExcelStyle(td, activeSheetName, addr);
-
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-      table.appendChild(tbody);
-
-      // Mount
-      out.innerHTML = '';
-      out.appendChild(table);
-      currentHTMLTable = table;
-
-      // interactions (persistent)
-      table.addEventListener('click', onCellClick);
-      applyFilter();
-    }
-
-    function onCellClick(ev){
-      const td = ev.target.closest('td');
-      if(!td || !td.dataset.address) return;
-      const addr = td.dataset.address;
-      const cell = currentWS[addr] || {};
-      const fmt  = XLSX.utils.format_cell(cell);
-      const info = {
-        Address: addr,
-        Value: fmt || '',
-        Raw: (cell.v!==undefined ? String(cell.v) : ''),
-        Formula: (cell.f ? "="+cell.f : ''),
-        Type: cell.t || '',
-        Format: cell.z || '',
-        Hyperlink: (cell.l && (cell.l.Target || cell.l.target)) ? (cell.l.Target || cell.l.target) : ''
-      };
-      const kv = document.getElementById('cellInfo');
-      kv.innerHTML = '';
-      Object.entries(info).forEach(([k,v])=>{
-        const b = document.createElement('b'); b.textContent = k;
-        const s = document.createElement('span'); s.textContent = v || '–';
-        kv.appendChild(b); kv.appendChild(s);
-      });
-    }
-
-    function applyFilter(){
-      if(!currentHTMLTable) return;
-      const q = (filterInp.value||'').toLowerCase();
-      const rows = currentHTMLTable.querySelectorAll('tbody tr');
-      rows.forEach(row=>{
-        if(!q){ row.classList.remove('hidden'); return; }
-        const text = row.textContent.toLowerCase();
-        row.classList.toggle('hidden', !text.includes(q));
-      });
-    }
-
-    // Deep-link support
-    (function initFromQuery(){
-      const params = new URLSearchParams(location.search);
-      const qFile  = params.get('file');
-      const qSheet = params.get('sheet');
-      const qF     = params.get('f');
-      const qSc    = params.get('sc');
-      if(qF === '1') showForm.checked = true;
-
-      if (qSc && SCENARIO_OPTS.includes(qSc)) scenarioSel.value = qSc;
-
-      if(qFile){
-        const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
-        if(match) fileSel.value = match.path;
-      }
-      loadWorkbook(fileSel.value).then(()=>{
-        if(qSheet && currentWB.SheetNames.includes(qSheet)){
-          sheetSel.value = qSheet;
-          currentWS = currentWB.Sheets[qSheet];
-          renderSheet(currentWS);
-        }
-      });
-    })();
-  </script>
-</body>
-</html>
+        if (r
