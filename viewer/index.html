@@ -14,7 +14,7 @@
       --cellw: 180px;       /* default column width */
       --rowheadw: 64px;     /* row-header width */
     }
-    /* Excel-look theme (default ON via body.excel) */
+    /* Excel-look theme (permanently ON) */
     body.excel{
       --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#d6d9df; --grid:#e3e6eb; --text:#1e1e1e; --accent:#17664b;
     }
@@ -64,12 +64,10 @@
       background-clip: padding-box;
     }
     thead th{position:sticky; top:0; background:#f4f6f8; z-index:2}
-    body:not(.excel) thead th{ background:rgba(0,0,0,0.15); }
     thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--grid)}
     tbody th.firstcol{
       position:sticky; left:0; background:#fafbfc; z-index:1; box-shadow:2px 0 0 0 var(--grid)
     }
-    body:not(.excel) tbody th.firstcol{ background:rgba(0,0,0,0.10); }
     /* Column sizing fallback */
     thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
     thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
@@ -108,7 +106,6 @@
       </label>
       <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
       <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
-      <label class="pill"><input type="checkbox" id="excelTheme" checked> Excel look</label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
@@ -168,7 +165,6 @@
     const filterInp = document.getElementById('filter');
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
-    const excelTheme = document.getElementById('excelTheme');
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
     let hf = null;  // HyperFormula instance
@@ -184,10 +180,6 @@
     });
     fileSel.value = files[0].path;
     scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join('');
-
-    excelTheme.addEventListener('change', () => {
-      document.body.classList.toggle('excel', excelTheme.checked);
-    });
 
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
     sheetSel.addEventListener('change', () => {
@@ -306,7 +298,6 @@
         });
 
         const borders = Array.from(sdoc.getElementsByTagName('borders')[0]?.getElementsByTagName('border') || []).map(n => {
-          // lightweight: only flags if any side exists
           const has = ['left','right','top','bottom'].some(s => n.getElementsByTagName(s)[0]?.getAttribute('style'));
           return { has };
         });
@@ -390,10 +381,10 @@
       }
     }
 
-    function pxFromCol(col){ // helper to read width from ws['!cols']
+    function pxFromCol(col){
       if (!col) return null;
       if (col.wpx) return Math.round(col.wpx);
-      if (col.wch) return Math.round(col.wch * 7 + 5); // approx
+      if (col.wch) return Math.round(col.wch * 7 + 5);
       return null;
     }
 
@@ -583,7 +574,7 @@
 
         for(let C=range.s.c; C<=range.e.c; ++C){
           const addr = XLSX.utils.encode_cell({r:R,c:C});
-          if (covered.has(addr)) continue; // inside a merged range; skip (will be covered by top-left cell)
+          if (covered.has(addr)) continue;
 
           const td = document.createElement('td');
           const cell = ws[addr];
