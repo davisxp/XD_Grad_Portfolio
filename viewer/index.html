@@ -141,12 +141,12 @@
       { path: "../models/DCF_SN.xlsx",            label: "Valuations" }
     ];
 
-    // === Scenario binding (EDIT THESE to match your model) ===
-    const SCENARIO = {
-      sheet: 'DCF',                    // sheet that holds your scenario input
-      targets: ['J22', 'J34'],         // write to BOTH cells
-      options: ['Bear','Central','Bull']
-    };
+	// === Scenario bindings (multiple sheets/cells) ===
+	const SCENARIO_OPTS = ['Bear','Central','Bull'];   // allowed values (must match your model)
+	const SCENARIOS = [
+	  { sheet: 'DCF',  targets: ['J22','J34'] },       // existing DCF inputs
+	  { sheet: 'SOTP', targets: ['B28','H28','N28'] }  // NEW: SOTP case drivers
+	];
 
     // === Cross-workbook support: list external files referenced by formulas ===
     const LINKED_FILES = ["../models/3_Statement_Model.xlsx"];
@@ -176,7 +176,7 @@
       fileSel.appendChild(opt);
     });
     fileSel.value = files[0].path;
-    scenarioSel.innerHTML = SCENARIO.options.map(v => `<option value="${v}">${v}</option>`).join('');
+	scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join('');
 
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
     sheetSel.addEventListener('change', () => {
@@ -251,25 +251,32 @@
         : String(val);
     }
 
-    // === Scenario helpers: write/read both target cells ===
-    function setScenarioInHF(value){
-      const id = hf.getSheetId(SCENARIO.sheet);
-      const { r0, c0 } = sheetOffsets[SCENARIO.sheet] || { r0: 0, c0: 0 };
-      SCENARIO.targets.forEach(addr => {
-        const { r, c } = XLSX.utils.decode_cell(addr);
-        hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
-      });
-    }
-    function readScenarioFromHF(){
-      const id = hf.getSheetId(SCENARIO.sheet);
-      const { r0, c0 } = sheetOffsets[SCENARIO.sheet] || { r0: 0, c0: 0 };
-      for (const addr of SCENARIO.targets){
-        const { r, c } = XLSX.utils.decode_cell(addr);
-        const v = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
-        if (v != null) return String(v);
-      }
-      return null;
-    }
+	// === Scenario helpers: write/read ACROSS all bound sheets/cells ===
+	function setScenarioInHF(value){
+	  SCENARIOS.forEach(({sheet, targets}) => {
+		const id = hf.getSheetId(sheet);
+		const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
+		targets.forEach(addr => {
+		  const { r, c } = XLSX.utils.decode_cell(addr);
+		  hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
+		});
+	  });
+	}
+
+	function readScenarioFromHF(){
+	  // Prefer reading from the first configured sheet/cell that yields a non-null value
+	  for (const {sheet, targets} of SCENARIOS){
+		const id = hf.getSheetId(sheet);
+		const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
+		for (const addr of targets){
+		  const { r, c } = XLSX.utils.decode_cell(addr);
+		  const v = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
+		  if (v != null) return String(v);
+		}
+	  }
+	  return null;
+	}
+
 
     async function loadWorkbook(path){
       try{
@@ -379,12 +386,12 @@
 
         // pull current value from either target cell
         const curVal = readScenarioFromHF();
-        if (curVal && SCENARIO.options.includes(curVal)) scenarioSel.value = curVal;
+        if (curVal && SCENARIO_OPTS.options.includes(curVal)) scenarioSel.value = curVal;
 
         // Honour deep link ?sc=
         const params = new URLSearchParams(location.search);
         const qSc = params.get('sc');
-        if (qSc && SCENARIO.options.includes(qSc)) {
+        if (qSc && SCENARIO_OPTS.options.includes(qSc)) {
           scenarioSel.value = qSc;
           setScenarioInHF(qSc);
         }
@@ -512,7 +519,7 @@
       const qSc    = params.get('sc');
       if(qF === '1') showForm.checked = true;
 
-      if (qSc && SCENARIO.options.includes(qSc)) scenarioSel.value = qSc;
+      if (qSc && SCENARIO_OPTS.options.includes(qSc)) scenarioSel.value = qSc;
 
       if(qFile){
         const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
