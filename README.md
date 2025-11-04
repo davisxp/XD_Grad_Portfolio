@@ -117,6 +117,6 @@ For educational/experience demonstration purposes only; not investment advice.
 **Maintainer:** Xavier Davis  
 **Updated:** 3 November 2025  
 **Repository:** https://github.com/davisxp/XD_Grad_Portfolio  
-**Live viewer:** https://davisxp.github.io/XD_Grad_Portfolio/  
+**Live viewer:** https://davisxp.github.io/XD_Grad_Portfolio/ <br>
 **See my other work and experience:**
 <iframe src="https://app.crowdworks.it/embed/companies/medforth-derivatives" title="Embedded company profile widget" width="504" height="320" style="max-width: 100%; display: block;" frameborder="0"></iframe>
