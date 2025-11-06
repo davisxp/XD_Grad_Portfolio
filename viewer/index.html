@@ -90,7 +90,8 @@
 </head>
 <body class="excel">
   <header>
-    <a class="btn" href="https://davisxp.github.io/XD_Grad_Portfolio/">Back to landing page</a>
+    <!-- CHANGED: add id and neutral href so JS controls navigation -->
+    <a id="backToLanding" class="btn" href="#">Back to landing page</a>
     <h1>Live Spreadsheet Viewer</h1>
     <div class="spacer"></div>
 
@@ -715,6 +716,39 @@
           renderSheet(currentWS);
         }
       });
+    })();
+  </script>
+
+  <!-- NEW: Back button handler that forces same-origin root and cache-busts any stale 301/HSTS -->
+  <script>
+    (function () {
+      const el = document.getElementById('backToLanding');
+      if (!el) return;
+
+      // Also set a safe href on load (useful for long-press / copy link on mobile)
+      (function setSafeHref(){
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+        el.setAttribute('href', basePath + '?noredir=' + Date.now());
+      })();
+
+      el.addEventListener('click', function (e) {
+        // Prevent any rogue default or global handlers from rewriting the URL
+        e.preventDefault();
+
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+
+        // Build a fresh URL on the current origin. The query ensures it won't match an old cached redirect.
+        const url = location.origin + basePath + '?noredir=' + Date.now();
+
+        // Replace so the back stack isn't polluted
+        location.replace(url);
+      }, { passive: false });
     })();
   </script>
 </body>
