@@ -480,6 +480,7 @@
       scenarioSel.onchange = () => {
         try {
           setScenarioInHF(scenarioSel.value);
+		  if (hf && hf.recompute) hf.recompute();
           renderSheet(currentWS);
           status('Scenario updated');
         } catch(e) {
