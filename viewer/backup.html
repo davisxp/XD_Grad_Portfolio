@@ -217,11 +217,7 @@
 
     function formatUsingCell(val, cell, sheetName){
       if (val === null || val === undefined) return '';
-      // SHOW REAL HF ERRORS (do not mask with cached Excel text)
-      if (val && typeof val === 'object' && 'type' in val) {
-        const map = { NAME:'#NAME?', REF:'#REF!', DIV_BY_ZERO:'#DIV/0!', VALUE:'#VALUE!', NUM:'#NUM!', NA:'#N/A' };
-        return map[val.type] || '#ERROR';
-      }
+      if (val && typeof val === 'object' && 'type' in val) return cell ? XLSX.utils.format_cell(cell) : '';
       if (cell && cell.z !== undefined) {
         try{
           let v = val;
@@ -451,22 +447,11 @@
         const buf = await res.arrayBuffer();
         const wb = XLSX.read(buf, { type: 'array' });
         if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
-
-        // collect Names per workbook
-        const nameMap = (function collectNameMap(wb){
-          const names = (wb.Workbook && wb.Workbook.Names) || [];
-          const map = {};
-          names.forEach(n => {
-            if (n && n.Name && n.Ref) map[n.Name] = n.Ref; // e.g. "Inputs!$B$6"
-          });
-          return map;
-        })(wb);
-
-        workbooks.push({ path: p, wb, nameMap });
+        workbooks.push({ path: p, wb });
       }
 
       const sheetsData = {};
-      for (const { wb, nameMap } of workbooks) {
+      for (const { wb } of workbooks) {
         const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
         for (const name of wb.SheetNames) {
           const ws = wb.Sheets[name];
@@ -474,30 +459,13 @@
           const r = XLSX.utils.decode_range(ref);
           const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
           const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
-
-          // helper: expand workbook Names in a formula
-          const expandNames = (formula) => {
-            if (!nameMap) return formula;
-            let f = formula;
-            for (const [nm, adr] of Object.entries(nameMap)) {
-              const re = new RegExp(`(?<![A-Za-z0-9_])${nm}(?![A-Za-z0-9_])`, 'g');
-              f = f.replace(re, adr);
-            }
-            return f;
-          };
-
           for (let R=r.s.r; R<=r.e.r; ++R){
             for (let C=r.s.c; C<=r.e.c; ++C){
               const addr = XLSX.utils.encode_cell({r:R,c:C});
               const cell = ws[addr];
               if (!cell) continue;
-              if (cell.f) {
-                let f = stripBookRefs(cell.f);
-                f = expandNames(f);                 // <-- expand workbook Names
-                aoa[R - r.s.r][C - r.s.c] = "=" + f;
-              } else {
-                aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
-              }
+              if (cell.f) aoa[R - r.s.r][C - r.s.c] = "=" + stripBookRefs(cell.f);
+              else        aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
             }
           }
           const key = name;
