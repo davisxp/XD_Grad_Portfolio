@@ -5,7 +5,7 @@ A clean public landing page for my valuation, modelling, and deal-structuring wo
 <p align="left">
   <a href="https://davisxp.github.io/XD_Grad_Portfolio/viewer/"><img alt="Open Live Viewer" src="https://img.shields.io/badge/Open-Live%20Model%20Viewer-1f883d?style=for-the-badge"></a>
   <a href="https://github.com/davisxp/XD_Grad_Portfolio"><img alt="View Repo" src="https://img.shields.io/badge/GitHub-Repo-0969da?style=for-the-badge"></a>
-  <img alt="Updated" src="https://img.shields.io/badge/Updated-30%20Oct%202025-555?style=for-the-badge">
+  <img alt="Updated" src="https://img.shields.io/badge/Updated-12%20Nov%202025-555?style=for-the-badge">
 </p>
 
 ---
@@ -99,8 +99,10 @@ Status of each module (✔ complete, ⏳ in progress, □ to do):
 - ✔ **Three Statements** — complete  
 - ✔ **DCF (multiples and perpetuity)** — complete  
 - ✔ **SOTP** — complete 
-- ✔ **rNPV** — in progress
-- □ **Comparables and Precedents Valuation** — to do  
+- ✔ **rNPV** — complete
+- ✔ **Comparables Precedents Valuation** — complete  
+- □ **Precedents Valuation** — to do  
+- ⏳ **Valuation Thesis** - in progress
 - □ **Merger Accretion Dilution (Medtronic as the acquiring firm)** — to do  
 - □ **LBO** — to do  
 - □ **Stock Issuance** — to do  
@@ -115,7 +117,7 @@ Status of each module (✔ complete, ⏳ in progress, □ to do):
 For educational/experience demonstration purposes only; not investment advice.
 
 **Maintainer:** Xavier Davis  
-**Updated:** 3 November 2025  
+**Updated:** 12 November 2025  
 **Repository:** https://github.com/davisxp/XD_Grad_Portfolio  
 **Live viewer:** https://davisxp.github.io/XD_Grad_Portfolio/  
 **See my other work and experience:** <iframe src="https://app.crowdworks.it/embed/companies/medforth-derivatives" title="Embedded company profile widget" width="504" height="320" style="max-width: 100%; display: block;" frameborder="0"></iframe>
