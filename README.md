@@ -100,7 +100,7 @@ Status of each module (✔ complete, ⏳ in progress, □ to do):
 - ✔ **DCF (multiples and perpetuity)** — complete  
 - ✔ **SOTP** — complete 
 - ✔ **rNPV** — complete
-- ✔ **Comparables Precedents Valuation** — complete  
+- ✔ **Comparables Valuation** — complete  
 - □ **Precedents Valuation** — to do  
 - ⏳ **Valuation Thesis** - in progress
 - □ **Merger Accretion Dilution (Medtronic as the acquiring firm)** — to do  
