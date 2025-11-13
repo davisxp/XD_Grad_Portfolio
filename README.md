@@ -53,26 +53,26 @@ All models are available for direct download below. Files can be opened in Excel
 
 | Model | Description | Status |
 |-------|-------------|--------|
-| **[Three-Statement Model](models/3_Statement_Model.xlsx?raw=1)** | Integrated income statement, balance sheet, and cash flow statement with dynamic drivers and scenario analysis | ✔ Complete |
-| **[DCF Valuations](models/DCF_SN.xlsx?raw=1)** | Discounted cash flow analysis using both exit multiple and perpetuity growth methods, including SOTP and rNPV valuations | ✔ Complete |
-| **[Comparables & Precedents](models/Comps_Precs.xlsx?raw=1)** | Comparable company analysis and precedent transaction analysis for relative valuation | ✔ Complete |
-| **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)** | Consolidated valuation summary with cross-methodology reconciliation | ⏳ In Progress |
+| **[Three-Statement Model](models/3_Statement_Model.xlsx?raw=1)** | Integrated income statement, balance sheet, and cash flow statement with dynamic drivers and scenario analysis | Complete |
+| **[DCF Valuations](models/DCF_SN.xlsx?raw=1)** | Discounted cash flow analysis using both exit multiple and perpetuity growth methods, including SOTP and rNPV valuations | Complete |
+| **[Comparables & Precedents](models/Comps_Precs.xlsx?raw=1)** | Comparable company analysis and precedent transaction analysis for relative valuation | Complete |
+| **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)** | Consolidated valuation summary with cross-methodology reconciliation | In Progress |
 
 ### Deal Structuring Models
 
 | Model | Description | Status |
 |-------|-------------|--------|
-| **[Merger Accretion/Dilution](models/Merger_Accretion_Dilution.xlsx?raw=1)** | Sources & uses, synergy timing, purchase price allocation, financing mix, and EPS accretion/dilution analysis | □ Planned |
-| **[LBO Model](models/LBO.xlsx?raw=1)** | Sponsor-style leveraged buyout with debt tranches, fees, cash sweep mechanics, covenant analysis, and exit MoIC/IRR calculations | □ Planned |
-| **[Stock Issuance](models/Stock_Issuance.xlsx?raw=1)** | Equity capital markets module for follow-on offerings: proceeds calculation, discount analysis, fee structure, and dilution impact | □ Planned |
-| **[Debt Issuance](models/Debt_Issuance.xlsx?raw=1)** | Debt capital markets sizing with instrument mix, spread analysis, amortization schedules, and credit rating headroom checks | □ Planned |
+| **[Merger Accretion/Dilution](models/Merger_Accretion_Dilution.xlsx?raw=1)** | Sources & uses, synergy timing, purchase price allocation, financing mix, and EPS accretion/dilution analysis | Planned |
+| **[LBO Model](models/LBO.xlsx?raw=1)** | Sponsor-style leveraged buyout with debt tranches, fees, cash sweep mechanics, covenant analysis, and exit MoIC/IRR calculations | Planned |
+| **[Stock Issuance](models/Stock_Issuance.xlsx?raw=1)** | Equity capital markets module for follow-on offerings: proceeds calculation, discount analysis, fee structure, and dilution impact | Planned |
+| **[Debt Issuance](models/Debt_Issuance.xlsx?raw=1)** | Debt capital markets sizing with instrument mix, spread analysis, amortization schedules, and credit rating headroom checks | Planned |
 
 ### Investment Analysis
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| **[Long Investment Proposal](outputs/Long_Investment_Proposal.pdf?raw=1)** | Comprehensive long thesis with investment catalysts, valuation cross-checks, and risk mitigation strategies | □ Planned |
-| **[Short Investment Proposal](outputs/Short_Investment_Proposal.pdf?raw=1)** | Short thesis with structural bear case analysis and downside catalyst identification | □ Planned |
+| **[Long Investment Proposal](outputs/Long_Investment_Proposal.pdf?raw=1)** | Comprehensive long thesis with investment catalysts, valuation cross-checks, and risk mitigation strategies | Planned |
+| **[Short Investment Proposal](outputs/Short_Investment_Proposal.pdf?raw=1)** | Short thesis with structural bear case analysis and downside catalyst identification | Planned |
 
 ---
 
@@ -91,30 +91,6 @@ All models are available for direct download below. Files can be opened in Excel
 - **Excel-style formatting** preservation
 - **Deep linking** for sharing specific views
 - **Responsive design** for desktop and mobile viewing
-
----
-
-## Portfolio Status
-
-### Completed Modules
-- ✔ Three-Statement Model
-- ✔ DCF Valuations (multiples and perpetuity)
-- ✔ Sum-of-the-Parts (SOTP) Valuation
-- ✔ Risk-Adjusted NPV (rNPV) Valuation
-- ✔ Comparables Valuation
-- ✔ Precedents Valuation
-
-
-### In Progress
-- ⏳ Valuation Thesis and Overview
-
-### Planned
-- □ Merger Accretion/Dilution (Medtronic as acquiring firm)
-- □ LBO Model
-- □ Stock Issuance Model
-- □ Debt Issuance Model
-- □ Long Investment Proposal
-- □ Short Investment Proposal
 
 ---
 
