@@ -9,77 +9,382 @@
   <meta property="og:type" content="website">
   <meta name="theme-color" content="#0b0c0f">
   <meta name="description" content="Portfolio and live spreadsheet previews" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --pad: 18px;
-      --bg: #f7f7f7;
-      --bd: #e5e5e5;
+      --page-gradient: linear-gradient(135deg, #0b0c0f 0%, #192239 38%, #1f883d 100%);
+      --surface: rgba(255, 255, 255, 0.96);
+      --surface-muted: rgba(255, 255, 255, 0.82);
+      --border: rgba(255, 255, 255, 0.24);
+      --text: #0b0c0f;
+      --muted: #4b5563;
+      --accent: #1f883d;
+      --accent-dark: #15682d;
+      --shadow-lg: 0 28px 60px -30px rgba(11, 12, 15, 0.5);
+      --max-width: min(1100px, 92vw);
+    }
+    * {
+      box-sizing: border-box;
     }
     body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
       margin: 0;
-      line-height: 1.5;
-      background: #fff;
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      line-height: 1.6;
+      background: var(--page-gradient);
+      color: var(--text);
     }
-    header {
-      padding: var(--pad);
-      background: var(--bg);
-      border-bottom: 1px solid var(--bd);
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    h1 {
-      margin: 0;
-      font-size: 20px;
-    }
-    .spacer {
-      flex: 1;
-    }
-    .btn {
-      display: inline-block;
-      padding: 8px 12px;
-      border: 1px solid var(--bd);
-      border-radius: 8px;
+    a {
+      color: inherit;
       text-decoration: none;
     }
+    a:hover {
+      text-decoration: none;
+    }
+    .page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      background: rgba(11, 12, 15, 0.78);
+      color: #f8fafc;
+      padding: 18px clamp(18px, 4vw, 40px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    .logo {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+    .nav-links {
+      display: inline-flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: transparent;
+      color: inherit;
+      font-weight: 500;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      cursor: pointer;
+    }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 12px 26px -12px rgba(31, 136, 61, 0.6);
+    }
+    .btn.primary:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 18px 30px -20px rgba(21, 104, 45, 0.9);
+    }
+    .btn.secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #f8fafc;
+    }
+    .btn.secondary:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: translateY(-1px);
+    }
     main {
-      max-width: 900px;
-      margin: 0 auto;
-      padding: var(--pad);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: clamp(48px, 8vw, 72px);
+      padding: clamp(48px, 10vw, 96px) 0 72px;
+    }
+    section {
+      width: var(--max-width);
+    }
+    .hero {
+      display: grid;
+      gap: clamp(24px, 4vw, 32px);
+      padding: clamp(32px, 5vw, 48px);
+      background: var(--surface);
+      border-radius: 28px;
+      box-shadow: var(--shadow-lg);
+    }
+    .hero .kicker {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--accent);
+    }
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(32px, 6vw, 48px);
+      line-height: 1.1;
+      color: #101828;
+    }
+    .hero-copy {
+      font-size: clamp(17px, 2vw, 20px);
+      max-width: 680px;
+      margin: 0;
+      color: #1f2937;
+    }
+    .hero-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .hero-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 18px;
+      margin: 0;
+      padding: 0;
+    }
+    .hero-metrics dt {
+      margin: 0;
+      font-size: clamp(28px, 3vw, 36px);
+      font-weight: 600;
+      color: #101828;
+    }
+    .hero-metrics dd {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .feature-grid {
+      display: grid;
+      gap: clamp(18px, 3vw, 28px);
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .feature-card {
+      padding: clamp(20px, 3vw, 28px);
+      background: var(--surface-muted);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 24px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 20px 40px -36px rgba(15, 23, 42, 0.6);
+      display: grid;
+      gap: 12px;
+    }
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: rgba(31, 136, 61, 0.12);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .feature-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: var(--accent);
+    }
+    .feature-card h3 {
+      margin: 0;
+      font-size: 18px;
+      color: #101828;
+    }
+    .feature-card p {
+      margin: 0;
+      font-size: 15px;
+      color: var(--muted);
+    }
+    .readme-section {
+      display: grid;
+      gap: 18px;
+    }
+    .readme-card {
+      padding: clamp(24px, 4vw, 32px);
+      background: var(--surface);
+      border-radius: 24px;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid rgba(15, 23, 42, 0.1);
+    }
+    .readme-card h2 {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: clamp(24px, 3vw, 28px);
+      color: #101828;
+    }
+    .meta {
+      font-size: 14px;
+      color: var(--muted);
+    }
+    #readme {
+      margin-top: 12px;
+      line-height: 1.65;
+    }
+    #readme h1,
+    #readme h2,
+    #readme h3,
+    #readme h4 {
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      color: #101828;
+    }
+    #readme table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    #readme th,
+    #readme td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(248, 250, 252, 0.8);
+    }
+    #readme tr:last-of-type td {
+      border-bottom: none;
     }
     #readme img {
       max-width: 100%;
+      border-radius: 16px;
+      box-shadow: 0 18px 40px -24px rgba(15, 23, 42, 0.3);
     }
     footer {
-      padding: var(--pad);
-      color: #666;
-      font-size: 12px;
-      border-top: 1px solid var(--bd);
-      background: var(--bg);
+      margin-top: auto;
+      padding: 28px clamp(18px, 4vw, 40px);
+      color: rgba(241, 245, 249, 0.82);
+      font-size: 13px;
+      border-top: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(11, 12, 15, 0.78);
+      backdrop-filter: blur(18px);
+    }
+    footer a {
+      color: rgba(148, 233, 185, 0.92);
     }
     .error {
       color: #b00020;
+      font-weight: 500;
+    }
+    @media (max-width: 720px) {
+      .top-nav {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .logo {
+        font-size: 18px;
+      }
+      .hero {
+        padding: clamp(24px, 4vw, 32px);
+      }
+      .hero-cta {
+        width: 100%;
+      }
+      .btn {
+        flex: 1;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Portfolio</h1>
-    <span class="spacer"></span>
-    <a class="btn" href="viewer/">Open Live Viewer</a>
-    <a class="btn" href="https://github.com/davisxp/XD_Grad_Portfolio" target="_blank" rel="noopener">View on GitHub</a>
-  </header>
+  <div class="page">
+    <header class="top-nav">
+      <div class="logo">XD Finance Portfolio</div>
+      <nav class="nav-links">
+        <a class="btn secondary" href="#briefing">Portfolio Overview</a>
+        <a class="btn secondary" href="https://github.com/davisxp/XD_Grad_Portfolio" target="_blank" rel="noopener">View on GitHub</a>
+      </nav>
+    </header>
 
-  <main>
-    <div id="status" class="meta" aria-live="polite">Loading README…</div>
-    <div id="readme"></div>
-  </main>
+    <main>
+      <section class="hero">
+        <p class="kicker">Healthcare &amp; Life Sciences Specialist</p>
+        <h1>Investment-Grade Modeling and Valuation Insights</h1>
+        <p class="hero-copy">
+          Explore a curated set of institutional-quality Excel workbooks covering integrated three-statement models, scenario-driven valuations, and complex deal structures—delivered via an interactive web viewer.
+        </p>
+        <div class="hero-cta">
+          <a class="btn primary" href="viewer/">Open Live Viewer</a>
+          <a class="btn secondary" href="#briefing">Read the Latest Portfolio Briefing</a>
+        </div>
+        <dl class="hero-metrics">
+          <div>
+            <dt>5</dt>
+            <dd>Completed valuation and modeling modules</dd>
+          </div>
+          <div>
+            <dt>3</dt>
+            <dd>Scenario cases embedded across every model</dd>
+          </div>
+          <div>
+            <dt>100%</dt>
+            <dd>Excel parity with HyperFormula-powered viewer</dd>
+          </div>
+        </dl>
+      </section>
 
-  <footer>
-    Tip: updates to <code>README.md</code> appear here automatically; click "Open Live Viewer" for the spreadsheets.
-  </footer>
+      <section class="feature-grid">
+        <article class="feature-card">
+          <span class="feature-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 4h2v16H3V4zm4 6h2v10H7V10zm4-4h2v14h-2V6zm4 8h2v6h-2v-6zm4-10h2v16h-2V4z"></path>
+            </svg>
+          </span>
+          <h3>Integrated Modeling</h3>
+          <p>Dynamic three-statement architecture with drivers, scenario toggles, and full cash flow reconciliation.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3l8.66 4.99v9.98L12 23 3.34 17.97V8L12 3zm0 2.31L5.84 9 12 12.69 18.16 9 12 5.31zm0 6.77L6 9.83v6.05L12 18.9l6-3.02V9.83l-6 2.25z"></path>
+            </svg>
+          </span>
+          <h3>Valuation Depth</h3>
+          <p>DCF, SOTP, and rNPV frameworks designed for healthcare deal diligence and investor-grade storytelling.</p>
+        </article>
+        <article class="feature-card">
+          <span class="feature-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 5h16v2H4V5zm0 4h10v2H4V9zm0 4h16v2H4v-2zm0 4h10v2H4v-2z"></path>
+            </svg>
+          </span>
+          <h3>Deal Structuring</h3>
+          <p>M&amp;A accretion/dilution, LBO leverage modeling, and capital markets toolkits mapped to planned deliverables.</p>
+        </article>
+      </section>
+
+      <section class="readme-section" id="briefing" aria-label="Portfolio briefing">
+        <div class="readme-card">
+          <h2>Portfolio Briefing</h2>
+          <p class="meta">Content syncs automatically with <code>README.md</code> on the main branch.</p>
+          <div id="status" class="meta" aria-live="polite">Loading README…</div>
+          <div id="readme"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Tip: updates to <code>README.md</code> appear here automatically. Questions? Reach out via the contact details in the briefing.
+    </footer>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>

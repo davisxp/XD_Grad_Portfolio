@@ -102,12 +102,13 @@ All models are available for direct download below. Files can be opened in Excel
 - ✔ Sum-of-the-Parts (SOTP) Valuation
 - ✔ Risk-Adjusted NPV (rNPV) Valuation
 - ✔ Comparables Valuation
+- ✔ Precedents Valuation
+
 
 ### In Progress
 - ⏳ Valuation Thesis and Overview
 
 ### Planned
-- □ Precedents Valuation
 - □ Merger Accretion/Dilution (Medtronic as acquiring firm)
 - □ LBO Model
 - □ Stock Issuance Model
