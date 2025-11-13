@@ -192,7 +192,7 @@
     let styleCtx = null;          // Excel styles from styles.xml (for current workbook)
 
     /* NEW: charts context */
-    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, yRef?, catRef?}]} ] }
+    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, xLit?, yRef?, yLit?, catRef?, catLit?}]} ] }
     let chartInstances = [];      // active Chart.js instances for cleanup
 
     // Populate dropdowns
@@ -420,13 +420,29 @@
         // Helper: localName query
         const byLocal = (root, name) => Array.from(root.getElementsByTagName('*')).filter(n => n.localName === name);
 
+        // Helper: parse literal values in chart XML (numLit/strLit)
+        function readLit(parent, litTag){
+          const lit = byLocal(parent, litTag)[0];
+          if(!lit) return null;
+          const pts = byLocal(lit, 'pt');
+          if(!pts.length) return null;
+          const vals = [];
+          pts.forEach(pt=>{
+            const v = byLocal(pt, 'v')[0];
+            vals[parseInt(pt.getAttribute('idx')||'0',10)] = v ? v.textContent : null;
+          });
+          return vals;
+        }
+
         // Helper: parse a chart part into our neutral definition
         function parseChartPart(chartXmlU8){
           const cDoc = parse(td.decode(chartXmlU8));
+          // Support both classic c:chart and modern cx:chart (Office 2016+)
           const typeOrder = [
             'lineChart','line3DChart','barChart','bar3DChart','columnChart','areaChart','area3DChart',
             'scatterChart','bubbleChart','pieChart','pie3DChart','doughnutChart','stockChart','radarChart'
           ];
+          // Search anywhere in the doc for first matching chart type (works for both c: and cx:)
           const typeNode = typeOrder.map(t => byLocal(cDoc, t)[0]).find(Boolean);
           if(!typeNode) return null;
 
@@ -438,6 +454,7 @@
           else if (/area|stock|radar/i.test(type)) type = 'line';
           else type = 'line';
 
+          // Title (either strRef -> f, or inline v)
           let titleF = null, titleText = null;
           const titleNode = byLocal(cDoc, 'title')[0];
           if(titleNode){
@@ -451,10 +468,12 @@
             }
           }
 
-          const serNodes = byLocal(typeNode, 'ser');
+          // Series nodes: handle both c:ser and cx:series
+          const serNodes = byLocal(typeNode, 'ser').concat(byLocal(typeNode, 'series'));
           const series = [];
           for (const sN of serNodes){
             let nameF = null, nameV = null;
+            // Try classic tx then cx:tx
             const tx = byLocal(sN, 'tx')[0];
             if(tx){
               const strRef = byLocal(tx, 'strRef')[0];
@@ -466,20 +485,37 @@
                 nameV = vNode.textContent.trim();
               }
             }
-            const getRefF = (parentNames) => {
+
+            // Helper to pick either *Ref(f) or *Lit(values) for a given parent list
+            function pickRefOrLit(parentNames){
+              let refF = null, lit = null;
               for(const nm of parentNames){
                 const p = byLocal(sN, nm)[0];
                 if(!p) continue;
                 const numRef = byLocal(p, 'numRef')[0] || byLocal(p, 'strRef')[0];
-                if(!numRef) continue;
-                const f = byLocal(numRef, 'f')[0];
-                if (f && f.textContent) return f.textContent.trim();
+                if(numRef){
+                  const f = byLocal(numRef, 'f')[0];
+                  if (f && f.textContent) { refF = f.textContent.trim(); break; }
+                }
+                // fallbacks (numLit/strLit)
+                lit = readLit(p, 'numLit') || readLit(p, 'strLit') || lit;
               }
-              return null;
-            };
-            const catRef = getRefF(['cat','xVal']); // bar/line use cat, scatter uses xVal
-            const yRef   = getRefF(['val','yVal']); // bar/line use val, scatter uses yVal
-            series.push({ nameF, nameV, catRef, xRef: catRef, yRef });
+              return { refF, lit };
+            }
+
+            // Categories or X and Y (scatter uses xVal/yVal)
+            const cat = pickRefOrLit(['cat','xVal']);
+            const y   = pickRefOrLit(['val','yVal']);
+
+            series.push({
+              nameF, nameV,
+              catRef: cat.refF || null,
+              catLit: Array.isArray(cat.lit) ? cat.lit : null,
+              xRef:   cat.refF || null,             // alias for scatter
+              xLit:   Array.isArray(cat.lit) ? cat.lit : null,
+              yRef:   y.refF || null,
+              yLit:   Array.isArray(y.lit) ? y.lit.map(Number) : null
+            });
           }
 
           return { type, titleF, titleText, series };
@@ -502,7 +538,7 @@
                 const drawingXmlEntry = zip[drawingPath];
                 if(!drawingXmlEntry) continue;
 
-                // map drawing rels rId -> chart xml path
+                // map drawing rels rId -> chart or chartEx xml path
                 const drawingRelsPath = 'xl/drawings/_rels/' + drawingPath.split('/').pop() + '.rels';
                 const dRelEntry = zip[drawingRelsPath];
                 if(!dRelEntry) continue;
@@ -510,13 +546,13 @@
                 const dMap = {};
                 Array.from(dRelsDoc.getElementsByTagName('Relationship')).forEach(r=>{
                   const id = r.getAttribute('Id');
-                  const tgt = (r.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,''); // e.g. ../charts/chart1.xml
+                  const tgt = (r.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,''); // e.g. ../charts/chart1.xml or ../charts/chartEx1.xml
                   dMap[id] = 'xl/' + tgt;
                 });
 
-                // find <c:chart r:id="..."> occurrences in drawing
+                // find any <*:chart r:id="..."> occurrences in drawing (c:chart or cx:chart)
                 const drawingDoc = parse(td.decode(drawingXmlEntry));
-                const chartElems = byLocal(drawingDoc, 'chart');
+                const chartElems = byLocal(drawingDoc, 'chart'); // catches c:chart and cx:chart by localName
                 for(const cEl of chartElems){
                   const rid = cEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || cEl.getAttribute('r:id');
                   const chartPath = dMap[rid];
@@ -530,14 +566,14 @@
             }
           }
 
-          // 2) Charts on a CHARTSHEET (direct relationship to a chart part)
+          // 2) Charts on a CHARTSHEET (direct relationship to a chart or chartEx part)
           if (meta.kind === 'chartsheet'){
             const csRelsPath = 'xl/chartsheets/_rels/' + meta.path.split('/').pop() + '.rels';
             const csRelsEntry = zip[csRelsPath];
             if (csRelsEntry){
               const csDoc = parse(td.decode(csRelsEntry));
               const chartRels = Array.from(csDoc.getElementsByTagName('Relationship'))
-                .filter(r => /\/chart$/i.test(r.getAttribute('Type')||'') || /relationships\/chart/i.test(r.getAttribute('Type')||''));
+                .filter(r => /relationships\/chart/i.test(r.getAttribute('Type')||''));
               for (const cr of chartRels){
                 const tgt = (cr.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,'');
                 const chartPath = 'xl/' + tgt;
@@ -985,13 +1021,46 @@
         cnv.setAttribute('aria-label', title || ('Chart '+(idx+1)));
         chartsOut.appendChild(cnv);
 
+        // Helpers to resolve data from either range refs (via HF) or literals captured from chart XML
+        function resolveLabels(firstSeries){
+          if (firstSeries.catRef){
+            const pr = parseSheetAndRange(firstSeries.catRef);
+            if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(v => String(v ?? ''));
+          }
+          if (Array.isArray(firstSeries.catLit)) return firstSeries.catLit.map(v => String(v ?? ''));
+          return [];
+        }
+        function resolveY(s){
+          if (s.yRef){
+            const pr = parseSheetAndRange(s.yRef);
+            if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+          }
+          if (Array.isArray(s.yLit)) return s.yLit.map(Number);
+          return [];
+        }
+        function resolveXY(s){
+          let xs = [];
+          let ys = [];
+          if (s.xRef){
+            const prx = parseSheetAndRange(s.xRef);
+            if (prx) xs = rangeToVector(getRangeValues(prx.sheet, prx.range)).map(Number);
+          } else if (Array.isArray(s.xLit)) {
+            xs = s.xLit.map(Number);
+          }
+          if (s.yRef){
+            const pry = parseSheetAndRange(s.yRef);
+            if (pry) ys = rangeToVector(getRangeValues(pry.sheet, pry.range)).map(Number);
+          } else if (Array.isArray(s.yLit)) {
+            ys = s.yLit.map(Number);
+          }
+          const len = Math.min(xs.length, ys.length);
+          return Array.from({length: len}, (_,i)=>({x: xs[i], y: ys[i]}));
+        }
+
         if (def.type === 'pie'){
-          // merge all series into one dataset if multiple
           const first = def.series[0] || {};
-          const catPr = parseSheetAndRange(first.catRef || first.xRef);
-          const yPr   = parseSheetAndRange(first.yRef);
-          const labels = catPr ? rangeToVector(getRangeValues(catPr.sheet, catPr.range)).map(x=>String(x ?? '')) : [];
-          const data   = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
+          const labels = resolveLabels(first);
+          const data   = resolveY(first);
           const cfg = {
             type: 'pie',
             data: { labels, datasets: [{ label: evalSeriesName(first) || title || 'Series', data }] },
@@ -999,15 +1068,11 @@
           };
           chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
         } else if (def.type === 'scatter'){
-          const datasets = def.series.map((s, i) => {
-            const xPr = parseSheetAndRange(s.xRef);
-            const yPr = parseSheetAndRange(s.yRef);
-            const xs = xPr ? rangeToVector(getRangeValues(xPr.sheet, xPr.range)).map(Number) : [];
-            const ys = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
-            const len = Math.min(xs.length, ys.length);
-            const data = Array.from({length: len}, (_,k)=>({x: xs[k], y: ys[k]}));
-            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data, showLine:false };
-          });
+          const datasets = def.series.map((s, i) => ({
+            label: evalSeriesName(s) || ('Series ' + (i+1)),
+            data: resolveXY(s),
+            showLine:false
+          }));
           const cfg = {
             type: 'scatter',
             data: { datasets },
@@ -1016,16 +1081,12 @@
           chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
         } else {
           // line / bar
-          // labels taken from the first series categories or xRef
           const first = def.series[0] || {};
-          const catPr = parseSheetAndRange(first.catRef || first.xRef);
-          const labels = catPr ? rangeToVector(getRangeValues(catPr.sheet, catPr.range)).map(v => String(v ?? '')) : [];
-
-          const datasets = def.series.map((s, i) => {
-            const yPr = parseSheetAndRange(s.yRef);
-            const ys = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
-            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data: ys };
-          });
+          const labels = resolveLabels(first);
+          const datasets = def.series.map((s, i) => ({
+            label: evalSeriesName(s) || ('Series ' + (i+1)),
+            data: resolveY(s)
+          }));
 
           const cfg = {
             type: def.type,
