@@ -19,10 +19,10 @@ This portfolio demonstrates expertise in building comprehensive financial models
 
 This collection includes integrated financial models covering the full spectrum of corporate finance and investment analysis:
 
-- **Integrated Financial Modeling** — Three-statement models with dynamic scenario analysis
-- **Valuation Methodologies** — DCF (multiples and perpetuity), SOTP, rNPV, and comparable company/precedent transaction analysis
-- **Deal Structuring** — M&A accretion/dilution, LBO modeling, and capital markets transactions
-- **Investment Analysis** — Long and short investment proposals with comprehensive thesis development
+- **Integrated Financial Modeling:** Three-statement models with dynamic scenario analysis
+- **Valuation Methodologies:** DCF (multiples and perpetuity), SOTP, rNPV, and comparable company/precedent transaction analysis
+- **Deal Structuring:** M&A accretion/dilution, LBO modeling, and capital markets transactions
+- **Investment Analysis:** Long and short investment proposals with comprehensive thesis development
 
 ---
 
@@ -32,12 +32,12 @@ This collection includes integrated financial models covering the full spectrum 
 
 The live viewer provides a read-only, browser-based experience for exploring models:
 
-1. **Access the Viewer** — Click "Open Live Viewer" above
-2. **Select a Workbook** — Choose from available financial models
-3. **Navigate Sheets** — Start with "Summary" or "Valuation" sheets for overviews
-4. **Explore Scenarios** — Toggle between Bear, Central, and Bull case scenarios
-5. **Inspect Details** — Use the formula inspector to examine underlying calculations
-6. **Share Views** — Generate shareable links for specific model views
+1. **Access the Viewer:** Click "Open Live Viewer" above
+2. **Select a Workbook:** Choose from available financial models
+3. **Navigate Sheets:** Start with "Summary" or "Valuation" sheets for overviews
+4. **Explore Scenarios:** Toggle between Bear, Central, and Bull case scenarios
+5. **Inspect Details:** Use the formula inspector to examine underlying calculations
+6. **Share Views:** Generate shareable links for specific model views
 
 **Note:** The online viewer is read-only for inputs. Scenario switching is available, but all other modifications require downloading the Excel files.
 
@@ -80,17 +80,15 @@ All models are available for direct download below. Files can be opened in Excel
 
 ### Model Dependencies
 
-- **Valuation modules** depend on the Three-Statement Model and DCF workbook for drivers and cross-checks
+- Valuation modules depend on the Three-Statement Model and DCF workbook for drivers and cross-checks
 - Models are built with Excel best practices: clear structure, formula transparency, and scenario flexibility
 - All models support Bear, Central, and Bull case scenario analysis
 
 ### Viewer Features
 
-- **Real-time formula evaluation** using HyperFormula engine
-- **Cell inspector** for detailed formula and value analysis
-- **Excel-style formatting** preservation
-- **Deep linking** for sharing specific views
-- **Responsive design** for desktop and mobile viewing
+- Real-time formula evaluation using HyperFormula 
+- Cell inspector for detailed formula and value analysis
+- Excel-style formatting preservation
 
 ---
 
