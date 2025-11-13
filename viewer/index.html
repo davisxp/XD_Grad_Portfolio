@@ -14,7 +14,6 @@
       --cellw: 180px;       /* default column width */
       --rowheadw: 64px;     /* row-header width */
     }
-    /* Excel-look theme (permanently ON) */
     body.excel{
       --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#d6d9df; --grid:#e3e6eb; --text:#1e1e1e; --accent:#17664b;
     }
@@ -68,7 +67,6 @@
     tbody th.firstcol{
       position:sticky; left:0; background:#fafbfc; z-index:1; box-shadow:2px 0 0 0 var(--grid)
     }
-    /* Column sizing fallback */
     thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
     thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
     tbody tr:nth-child(even) td{ background:rgba(0,0,0,0.01) }
@@ -80,22 +78,12 @@
     .hidden{display:none}
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
     @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
-
-    /* Charts sizing */
-    #chartsOut canvas{width:100%; height:260px; display:block; margin:10px 0;}
   </style>
-  <!-- Sheet parser -->
+
+  <!-- Third-party libs -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- Formula engine for live recalc -->
   <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
-  <!-- Tiny unzipper to read styles.xml for real Excel colours/fonts/borders -->
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
-  <!-- Chart.js core -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <!-- Time adapter (needed for financial time scales) -->
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-  <!-- Financial charts (OHLC / Candlestick) -->
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js"></script>
 </head>
 <body class="excel">
   <header>
@@ -121,7 +109,10 @@
   </header>
 
   <main>
-    <div id="sheetWrap"><div id="status" class="meta" style="padding:10px">Loading…</div><div id="out"></div></div>
+    <div id="sheetWrap">
+      <div id="status" class="meta" style="padding:10px">Loading…</div>
+      <div id="out"></div>
+    </div>
 
     <aside>
       <div class="panel" id="inspector">
@@ -137,12 +128,6 @@
           <b>Hyperlink</b><span>–</span>
         </div>
       </div>
-
-      <div class="panel" id="chartsPanel">
-        <h2>Charts</h2>
-        <div class="meta">Charts parsed from the workbook drawings. Supported: line, bar/column, area, scatter, bubble, pie/doughnut, radar, histogram, OHLC/candlestick.</div>
-        <div id="chartsOut"></div>
-      </div>
     </aside>
   </main>
 
@@ -150,1100 +135,351 @@
     Tip: provide a “Summary” sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
   </footer>
 
+  <!-- deps: heavy lifting (fetch/unzip/SheetJS/HF/style + rendering) -->
   <script>
-    // === Workbooks (case-sensitive paths) ===
-    const files = [
-      { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
-      { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
-      { path: "../models/Comps_Precs.xlsx",       label: "Comparables and Precedent Valuations" },
-      { path: "../models/Valuation_Overview.xlsx",label: "Valuation Overview" }
-    ];
+    // Expose helpers as a single global `deps` used by viewer.js
+    (function(){
+      const td = new TextDecoder("utf-8");
 
-    // === Scenario bindings (multiple sheets/cells) ===
-    const SCENARIO_OPTS = ['Bear','Central','Bull'];
-    const SCENARIOS = [
-      { sheet: 'DCF',  targets: ['J22','J34'] },
-      { sheet: 'SOTP', targets: ['B28','H28','N28'] },
-      { sheet: 'rNPV', targets: ['A1'] }
-    ];
+      function stripBookRefs(formula){ return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, ""); }
+      function isDateFmt(fmt){ return typeof fmt === "string" && /[dyhs]/i.test(fmt); }
 
-    // === External files needed for recalc ===
-    const LINKED_FILES = ["../models/3_Statement_Model.xlsx","../models/DCF_SN.xlsx"];
-
-    // Performance soft cap for enormous sheets
-    const MAX_R = 1500, MAX_C = 80;
-
-    // DOM
-    const fileSel   = document.getElementById('file');
-    const sheetSel  = document.getElementById('sheet');
-    const scenarioSel = document.getElementById('scenario');
-    const out       = document.getElementById('out');
-    const statusEl  = document.getElementById('status');
-    const showForm  = document.getElementById('showFormula');
-    const filterInp = document.getElementById('filter');
-    const copyBtn   = document.getElementById('copyLink');
-    const dlLink    = document.getElementById('downloadLink');
-
-    const chartsOut = document.getElementById('chartsOut');
-
-    let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
-    let hf = null;  // HyperFormula instance
-    const sheetOffsets = {};      // { [sheetName]: {r0, c0} }
-    const date1904BySheet = {};   // { [sheetName]: boolean }
-    let styleCtx = null;          // Excel styles from styles.xml (for current workbook)
-
-    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, xLit?, yRef?, yLit?, zRef?, zLit?, catRef?, catLit?}]} ] }
-    let chartInstances = [];      // active Chart.js instances for cleanup
-
-    // Populate dropdowns
-    files.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f.path; opt.textContent = f.label;
-      fileSel.appendChild(opt);
-    });
-    fileSel.value = files[0].path;
-    scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join('');
-
-    fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
-    sheetSel.addEventListener('change', () => {
-      const name = sheetSel.value;
-      if (!currentWB) return;
-      currentWS = currentWB.Sheets[name];
-      renderSheet(currentWS);
-      syncLink();
-    });
-    showForm.addEventListener('change', () => renderSheet(currentWS));
-    filterInp.addEventListener('input', () => applyFilter());
-
-    copyBtn.addEventListener('click', () => {
-      const short = (currentPath||"").split('/').pop();
-      const url = new URL(location.href);
-      url.searchParams.set('file', short);
-      url.searchParams.set('sheet', sheetSel.value);
-      url.searchParams.set('f', showForm.checked ? "1":"0");
-      url.searchParams.set('sc', scenarioSel.value);
-      navigator.clipboard.writeText(url.toString()).then(() => {
-        status('Link copied');
-      }).catch(() => status('Could not copy link'));
-    });
-
-    function syncLink(){
-      dlLink.href = currentPath;
-      dlLink.textContent = 'Download ' + (files.find(f=>f.path===currentPath)?.label || 'workbook');
-    }
-    function status(t){ statusEl.textContent = t; }
-
-    // Utils
-    function stripBookRefs(formula) {
-      return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, '');
-    }
-    function isDateFmt(fmt){ return typeof fmt === 'string' && /[dyhs]/i.test(fmt); }
-
-    function formatUsingCell(val, cell, sheetName){
-      if (val === null || val === undefined) return '';
-      if (val && typeof val === 'object' && 'type' in val) {
-        if (cell && typeof cell.w === 'string' && cell.w.trim()) return cell.w;
-        const map = { NAME:'#NAME?', REF:'#REF!', DIV_BY_ZERO:'#DIV/0!', VALUE:'#VALUE!', NUM:'#NUM!', NA:'#N/A' };
-        return map[val.type] || '#ERROR';
-      }
-      if (cell && cell.z !== undefined) {
-        try{
-          let v = val;
-          if (isDateFmt(cell.z) && date1904BySheet[sheetName]) v = Number(v) + 1462;
-          return XLSX.SSF.format(cell.z, v);
-        }catch{}
-      }
-      if (cell && typeof val === 'number' && typeof cell.w === 'string' && cell.w.trim()){
-        const w = cell.w, hasPct = /%/.test(w), hasGBP = /£/.test(w);
-        const mDec = w.match(/\.([0-9]+)/); const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
-        const useGrouping = /,/.test(w) || Math.abs(val) >= 1000;
-        const opts = { maximumFractionDigits: decimals, minimumFractionDigits: decimals, useGrouping };
-        if (hasGBP){ opts.style = 'currency'; opts.currency = 'GBP'; }
-        if (hasPct){ opts.style = 'percent'; }
-        try{ return new Intl.NumberFormat('en-GB', opts).format(val); }catch{}
-      }
-      return (typeof val === 'number') ? new Intl.NumberFormat('en-GB').format(val) : String(val);
-    }
-
-    // === Scenario helpers: write/read across all bound cells ===
-    function setScenarioInHF(value){
-      SCENARIOS.forEach(({sheet, targets}) => {
-        const id = hf.getSheetId(sheet);
-        const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
-        targets.forEach(addr => {
-          const { r, c } = XLSX.utils.decode_cell(addr);
-          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
-        });
-      });
-    }
-    function readScenarioFromHF(){
-      for (const {sheet, targets} of SCENARIOS){
-        const id = hf.getSheetId(sheet);
-        const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
-        for (const addr of targets){
-          const { r, c } = XLSX.utils.decode_cell(addr);
-          const v = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
-          if (v != null) return String(v);
-        }
-      }
-      return null;
-    }
-
-    // === Parse Excel styles and per-cell style indices from the XLSX buffer ===
-    async function extractStylesFromXLSX(arrayBuffer){
-      try{
-        const bytes = new Uint8Array(arrayBuffer);
-        const zip = fflate.unzipSync(bytes);
-        const td = new TextDecoder('utf-8');
-
-        const stylesXml = zip['xl/styles.xml'] ? td.decode(zip['xl/styles.xml']) : null;
-        const wbXml     = zip['xl/workbook.xml'] ? td.decode(zip['xl/workbook.xml']) : null;
-        const relsXml   = zip['xl/_rels/workbook.xml.rels'] ? td.decode(zip['xl/_rels/workbook.xml.rels']) : null;
-
-        if(!stylesXml || !wbXml || !relsXml) return null;
-
-        const parse = (xml) => (new DOMParser()).parseFromString(xml, 'application/xml');
-
-        // Parse styles.xml
-        const sdoc = parse(stylesXml);
-        const fonts = Array.from(sdoc.getElementsByTagName('fonts')[0]?.getElementsByTagName('font') || []).map(n => {
-          const bold = !!n.getElementsByTagName('b')[0];
-          const italic = !!n.getElementsByTagName('i')[0];
-          const sz = n.getElementsByTagName('sz')[0]?.getAttribute('val');
-          const name = n.getElementsByTagName('name')[0]?.getAttribute('val');
-          const col = n.getElementsByTagName('color')[0];
-          const rgb = col?.getAttribute('rgb'); // ARGB like FF112233
-          const color = rgb ? ('#'+rgb.slice(-6)) : null;
-          return { bold, italic, sz: sz? parseFloat(sz):null, name, color };
-        });
-
-        const fills = Array.from(sdoc.getElementsByTagName('fills')[0]?.getElementsByTagName('fill') || []).map(n => {
-          const pf = n.getElementsByTagName('patternFill')[0];
-          const ptype = pf?.getAttribute('patternType');
-          const fg = pf?.getElementsByTagName('fgColor')[0];
-          const rgb = fg?.getAttribute('rgb');
-          const color = (ptype === 'solid' && rgb) ? ('#'+rgb.slice(-6)) : null;
-          return { color };
-        });
-
-        const borders = Array.from(sdoc.getElementsByTagName('borders')[0]?.getElementsByTagName('border') || []).map(n => {
-          const has = ['left','right','top','bottom'].some(s => n.getElementsByTagName(s)[0]?.getAttribute('style'));
-          return { has };
-        });
-
-        const xfs = Array.from(sdoc.getElementsByTagName('cellXfs')[0]?.getElementsByTagName('xf') || []).map(xf => {
-          const fontId = parseInt(xf.getAttribute('fontId') ?? '-1',10);
-          const fillId = parseInt(xf.getAttribute('fillId') ?? '-1',10);
-          const borderId = parseInt(xf.getAttribute('borderId') ?? '-1',10);
-          const align = xf.getElementsByTagName('alignment')[0];
-          const alignment = align ? {
-            horizontal: align.getAttribute('horizontal') || null,
-            vertical: align.getAttribute('vertical') || null,
-            wrapText: align.getAttribute('wrapText') === '1'
-          } : null;
-          return { fontId, fillId, borderId, alignment };
-        });
-
-        // Map sheet name -> sheet xml path
-        const wdoc = parse(wbXml);
-        const sheets = Array.from(wdoc.getElementsByTagName('sheet')).map(s => ({
-          name: s.getAttribute('name'),
-          rid:  s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || s.getAttribute('r:id')
-        }));
-        const rdoc = parse(relsXml);
-        const rels = {};
-        Array.from(rdoc.getElementsByTagName('Relationship')).forEach(r=>{
-          rels[r.getAttribute('Id')] = r.getAttribute('Target');
-        });
-        const sheetPathByName = {};
-        sheets.forEach(s => {
-          const tgt = rels[s.rid];
-          if (tgt) sheetPathByName[s.name] = 'xl/' + tgt.replace(/^\//,'');
-        });
-
-        // For each sheet, map cell address -> style xf id (from <c s="N">)
-        const sheetCellXf = {};
-        for (const [sheetName, pth] of Object.entries(sheetPathByName)){
-          const entry = zip[pth];
-          if (!entry) continue;
-          const sxml = td.decode(entry);
-          const doc = parse(sxml);
-          const cells = doc.getElementsByTagName('c');
-          const map = {};
-          for (let i=0;i<cells.length;i++){
-            const c = cells[i];
-            const r = c.getAttribute('r'); // e.g., "A1"
-            const s = c.getAttribute('s');
-            if (r && s) map[r] = parseInt(s,10);
-          }
-          sheetCellXf[sheetName] = map;
-        }
-
-        return { fonts, fills, borders, xfs, sheetCellXf };
-      }catch(_){
-        return null;
-      }
-    }
-
-    /* === Extract chart definitions from the XLSX (supports classic and Office 2016+ chartEx) === */
-    async function extractChartsFromXLSX(arrayBuffer){
-      try{
-        const bytes = new Uint8Array(arrayBuffer);
-        const zip = fflate.unzipSync(bytes);
-        const td = new TextDecoder('utf-8');
-        const parse = (xml) => (new DOMParser()).parseFromString(xml, 'application/xml');
-
-        const wbXml = zip['xl/workbook.xml'] ? td.decode(zip['xl/workbook.xml']) : null;
-        const relsXml = zip['xl/_rels/workbook.xml.rels'] ? td.decode(zip['xl/_rels/workbook.xml.rels']) : null;
-        if(!wbXml || !relsXml) return {};
-
-        // Map sheet name -> sheet xml path and kind (worksheet vs chartsheet)
-        const wdoc = parse(wbXml);
-        const sheets = Array.from(wdoc.getElementsByTagName('sheet')).map(s => ({
-          name: s.getAttribute('name'),
-          rid:  s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || s.getAttribute('r:id')
-        }));
-        const rdoc = parse(relsXml);
-        const rels = {};
-        Array.from(rdoc.getElementsByTagName('Relationship')).forEach(r=>{
-          rels[r.getAttribute('Id')] = r.getAttribute('Target');
-        });
-
-        const sheetMeta = sheets.map(s => {
-          const tgt = rels[s.rid] || '';
-          const path = 'xl/' + tgt.replace(/^\//,'');
-          const kind = /chartsheets\//i.test(tgt) ? 'chartsheet' : 'worksheet';
-          return { name: s.name, path, kind };
-        });
-
-        // Query helpers
-        const byLocal = (root, name) => Array.from(root.getElementsByTagName('*')).filter(n => n.localName === name);
-        function readLit(parent, litTag){
-          const lit = byLocal(parent, litTag)[0];
-          if(!lit) return null;
-          const pts = byLocal(lit, 'pt');
-          if(!pts.length) return null;
-          const vals = [];
-          pts.forEach(pt=>{
-            const v = byLocal(pt, 'v')[0];
-            vals[parseInt(pt.getAttribute('idx')||'0',10)] = v ? v.textContent : null;
-          });
-          return vals;
-        }
-
-        function parseChartPart(chartXmlU8){
-          const cDoc = parse(td.decode(chartXmlU8));
-
-          // Include extended types (Excel 2016+)
-          const typeOrder = [
-            'lineChart','line3DChart',
-            'barChart','bar3DChart','columnChart',
-            'areaChart','area3DChart',
-            'scatterChart','bubbleChart',
-            'pieChart','pie3DChart','doughnutChart',
-            'radarChart',
-            'histogramChart',      // Office 2016
-            'stockChart',          // OHLC variants
-            'waterfallChart','funnelChart','boxWhiskerChart','sunburstChart','treemapChart'
-          ];
-          const typeNode = typeOrder.map(t => byLocal(cDoc, t)[0]).find(Boolean);
-          if(!typeNode) return null;
-
-          let type = typeNode.localName;
-          if (/histogram/i.test(type)) type = 'histogram';
-          else if (/stock/i.test(type)) type = 'stock';
-          else if (/bubble/i.test(type)) type = 'bubble';
-          else if (/radar/i.test(type)) type = 'radar';
-          else if (/doughnut/i.test(type)) type = 'doughnut';
-          else if (/pie/i.test(type)) type = 'pie';
-          else if (/scatter/i.test(type)) type = 'scatter';
-          else if (/bar|column/i.test(type)) type = 'bar';
-          else if (/area/i.test(type)) type = 'area';
-          else if (/line/i.test(type)) type = 'line';
-          else type = 'line';
-
-          let titleF = null, titleText = null;
-          const titleNode = byLocal(cDoc, 'title')[0];
-          if(titleNode){
-            const strRef = byLocal(titleNode, 'strRef')[0];
-            const vNode = byLocal(titleNode, 'v')[0];
-            if (strRef){
-              const fNode = byLocal(strRef, 'f')[0];
-              if (fNode && fNode.textContent) titleF = fNode.textContent.trim();
-            } else if (vNode){
-              titleText = vNode.textContent.trim();
-            }
-          }
-
-          // Series nodes (classic c:ser and chartEx cx:series)
-          const serNodes = byLocal(typeNode, 'ser').concat(byLocal(typeNode, 'series'));
-          const series = [];
-          for (const sN of serNodes){
-            let nameF = null, nameV = null;
-            const tx = byLocal(sN, 'tx')[0];
-            if(tx){
-              const strRef = byLocal(tx, 'strRef')[0];
-              const vNode = byLocal(tx, 'v')[0];
-              if (strRef){
-                const f = byLocal(strRef, 'f')[0];
-                if (f && f.textContent) nameF = f.textContent.trim();
-              } else if (vNode){
-                nameV = vNode.textContent.trim();
-              }
-            }
-            function pickRefOrLit(parentNames){
-              let refF = null, lit = null;
-              for(const nm of parentNames){
-                const p = byLocal(sN, nm)[0];
-                if(!p) continue;
-                const numRef = byLocal(p, 'numRef')[0] || byLocal(p, 'strRef')[0];
-                if(numRef){
-                  const f = byLocal(numRef, 'f')[0];
-                  if (f && f.textContent) { refF = f.textContent.trim(); break; }
-                }
-                lit = readLit(p, 'numLit') || readLit(p, 'strLit') || lit;
-              }
-              return { refF, lit };
-            }
-            const cat = pickRefOrLit(['cat','xVal']);    // category or x
-            const y   = pickRefOrLit(['val','yVal']);    // value or y
-            const z   = pickRefOrLit(['bubbleSize']);    // bubble size (if bubbleChart)
-
-            series.push({
-              nameF, nameV,
-              catRef: cat.refF || null, catLit: Array.isArray(cat.lit) ? cat.lit : null,
-              xRef:   cat.refF || null, xLit:  Array.isArray(cat.lit) ? cat.lit : null,
-              yRef:   y.refF || null,   yLit:  Array.isArray(y.lit) ? y.lit.map(Number) : null,
-              zRef:   z.refF || null,   zLit:  Array.isArray(z.lit) ? z.lit.map(Number) : null
-            });
-          }
-
-          return { type, titleF, titleText, series };
-        }
-
-        const chartsBySheet = {};
-
-        for (const meta of sheetMeta){
-          // 1) Charts embedded on a WORKSHEET via drawings
-          if (meta.kind === 'worksheet'){
-            const sheetRelsPath = 'xl/worksheets/_rels/' + meta.path.split('/').pop() + '.rels';
-            const relEntry = zip[sheetRelsPath];
-            if(relEntry){
-              const sRelsDoc = parse(td.decode(relEntry));
-              const drawRels = Array.from(sRelsDoc.getElementsByTagName('Relationship'))
-                .filter(r => /drawing/i.test(r.getAttribute('Type')||''));
-              for (const dr of drawRels){
-                const drawingTarget = (dr.getAttribute('Target') || '').replace(/^\//,'').replace(/^\.\.\//,'');
-                const drawingPath = 'xl/' + drawingTarget;
-                const drawingXmlEntry = zip[drawingPath];
-                if(!drawingXmlEntry) continue;
-
-                // map drawing rels rId -> chart or chartEx xml
-                const drawingRelsPath = 'xl/drawings/_rels/' + drawingPath.split('/').pop() + '.rels';
-                const dRelEntry = zip[drawingRelsPath];
-                if(!dRelEntry) continue;
-                const dRelsDoc = parse(td.decode(dRelEntry));
-                const dMap = {};
-                Array.from(dRelsDoc.getElementsByTagName('Relationship')).forEach(r=>{
-                  const id = r.getAttribute('Id');
-                  const tgt = (r.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,'');
-                  dMap[id] = 'xl/' + tgt;
-                });
-
-                // any <*:chart r:id="..."> (c:chart or cx:chart)
-                const drawingDoc = parse(td.decode(drawingXmlEntry));
-                const chartElems = byLocal(drawingDoc, 'chart');
-                for(const cEl of chartElems){
-                  const rid = cEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || cEl.getAttribute('r:id');
-                  const chartPath = dMap[rid];
-                  if(!chartPath || !zip[chartPath]) continue;
-                  const def = parseChartPart(zip[chartPath]);
-                  if(!def) continue;
-                  if(!chartsBySheet[meta.name]) chartsBySheet[meta.name] = [];
-                  chartsBySheet[meta.name].push(def);
-                }
-              }
-            }
-          }
-
-          // 2) Charts on a CHARTSHEET
-          if (meta.kind === 'chartsheet'){
-            const csRelsPath = 'xl/chartsheets/_rels/' + meta.path.split('/').pop() + '.rels';
-            const csRelsEntry = zip[csRelsPath];
-            if (csRelsEntry){
-              const csDoc = parse(td.decode(csRelsEntry));
-              const chartRels = Array.from(csDoc.getElementsByTagName('Relationship'))
-                .filter(r => /relationships\/chart/i.test(r.getAttribute('Type')||''));
-              for (const cr of chartRels){
-                const tgt = (cr.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,'');
-                const chartPath = 'xl/' + tgt;
-                if(!zip[chartPath]) continue;
-                const def = parseChartPart(zip[chartPath]);
-                if(!def) continue;
-                if(!chartsBySheet[meta.name]) chartsBySheet[meta.name] = [];
-                chartsBySheet[meta.name].push(def);
-              }
-            }
-          }
-        }
-
-        return chartsBySheet;
-      }catch(_){
-        return {};
-      }
-    }
-
-    function applyExcelStyle(td, sheetName, addr){
-      if (!styleCtx) return;
-      const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
-      if (xfIdx == null) return;
-      const xf = styleCtx.xfs[xfIdx] || {};
-      const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
-      if (fill && fill.color) td.style.backgroundColor = fill.color;
-      const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
-      if (font){
-        if (font.bold) td.style.fontWeight = '700';
-        if (font.italic) td.style.fontStyle = 'italic';
-        if (font.color) td.style.color = font.color;
-        if (font.sz) td.style.fontSize = font.sz + 'px';
-        if (font.name) td.style.fontFamily = font.name + ', ' + getComputedStyle(document.body).fontFamily;
-      }
-      if (xf.alignment){
-        if (xf.alignment.horizontal) td.style.textAlign = xf.alignment.horizontal;
-        if (xf.alignment.vertical)   td.style.verticalAlign = xf.alignment.vertical;
-        if (xf.alignment.wrapText){ td.style.whiteSpace = 'normal'; td.style.wordBreak = 'break-word'; }
-      }
-    }
-
-    function pxFromCol(col){
-      if (!col) return null;
-      if (col.wpx) return Math.round(col.wpx);
-      if (col.wch) return Math.round(col.wch * 7 + 5);
-      return null;
-    }
-
-    // === Load workbook ===
-    async function loadWorkbook(path){
-      try{
-        currentPath = path;
-        status('Loading workbook…');
-        out.innerHTML = '';
-        sheetSel.innerHTML = '';
-        styleCtx = null;
-        chartsBySheet = {};
-        destroyAllCharts();
-        chartsOut.innerHTML = '<div class="meta">Scanning for charts…</div>';
-
-        const res = await fetch(path, { cache: 'no-store' });
+      async function loadWorkbook(path){
+        const res = await fetch(path, { cache: "no-store" });
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
-
-        currentWB = XLSX.read(buf, { type: 'array' });
-        if (currentWB && currentWB.SSF) XLSX.SSF.load(currentWB.SSF);
-
-        styleCtx = await extractStylesFromXLSX(buf);
-        chartsBySheet = await extractChartsFromXLSX(buf);
-
-        currentWB.SheetNames.forEach(s => {
-          const opt = document.createElement('option');
-          opt.value = s; opt.textContent = s;
-          sheetSel.appendChild(opt);
-        });
-        const initial = currentWB.SheetNames.includes('Summary') ? 'Summary' : currentWB.SheetNames[0];
-        sheetSel.value = initial;
-        currentWS = currentWB.Sheets[initial];
-
-        await buildHF();
-        initScenarioFromHF();
-
-        renderSheet(currentWS);
-        status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
-        syncLink();
-      }catch(e){
-        out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
-        status('Error loading workbook');
-      }
-    }
-
-    async function buildHF(){
-      if (!window.HyperFormula) { hf = null; return; }
-      if (hf && hf.destroy) hf.destroy();
-
-      const paths = [currentPath, ...LINKED_FILES.filter(p => p !== currentPath)];
-      const workbooks = [];
-      for (const p of paths) {
-        const res = await fetch(p, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${p}`);
-        const buf = await res.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array' });
+        const wb = XLSX.read(buf, { type: "array" });
         if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
-
-        const nameMap = (function collectNameMap(wb){
-          const names = (wb.Workbook && wb.Workbook.Names) || [];
-          const map = {};
-          names.forEach(n => {
-            if (n && n.Name && n.Ref) map[n.Name] = n.Ref;
-          });
-          return map;
-        })(wb);
-
-        workbooks.push({ path: p, wb, nameMap });
+        return { wb, buf };
       }
 
-      const sheetsData = {};
-      for (const { wb, nameMap } of workbooks) {
-        const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
-        for (const name of wb.SheetNames) {
-          const ws = wb.Sheets[name];
-          const ref = ws['!ref'] || 'A1:A1';
-          const r = XLSX.utils.decode_range(ref);
-          const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
-          const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
+      async function extractStyles(buf){
+        try{
+          const bytes = new Uint8Array(buf);
+          const zip = fflate.unzipSync(bytes);
+          const stylesXml = zip["xl/styles.xml"] ? td.decode(zip["xl/styles.xml"]) : null;
+          const wbXml     = zip["xl/workbook.xml"] ? td.decode(zip["xl/workbook.xml"]) : null;
+          const relsXml   = zip["xl/_rels/workbook.xml.rels"] ? td.decode(zip["xl/_rels/workbook.xml.rels"]) : null;
+          if(!stylesXml || !wbXml || !relsXml) return null;
 
-          const expandNames = (formula) => {
-            if (!nameMap) return formula;
-            let f = formula;
-            for (const [nm, adr] of Object.entries(nameMap)) {
-              const re = new RegExp(`(?<![A-Za-z0-9_])${nm}(?![A-Za-z0-9_])`, 'g');
-              f = f.replace(re, adr);
+          const parse = (xml) => (new DOMParser()).parseFromString(xml, "application/xml");
+          const sdoc = parse(stylesXml);
+
+          const fonts = Array.from(sdoc.getElementsByTagName("fonts")[0]?.getElementsByTagName("font") || []).map(n => {
+            const bold = !!n.getElementsByTagName("b")[0];
+            const italic = !!n.getElementsByTagName("i")[0];
+            const sz = n.getElementsByTagName("sz")[0]?.getAttribute("val");
+            const name = n.getElementsByTagName("name")[0]?.getAttribute("val");
+            const col = n.getElementsByTagName("color")[0];
+            const rgb = col?.getAttribute("rgb");
+            const color = rgb ? ("#"+rgb.slice(-6)) : null;
+            return { bold, italic, sz: sz? parseFloat(sz):null, name, color };
+          });
+
+          const fills = Array.from(sdoc.getElementsByTagName("fills")[0]?.getElementsByTagName("fill") || []).map(n => {
+            const pf = n.getElementsByTagName("patternFill")[0];
+            const ptype = pf?.getAttribute("patternType");
+            const fg = pf?.getElementsByTagName("fgColor")[0];
+            const rgb = fg?.getAttribute("rgb");
+            const color = (ptype === "solid" && rgb) ? ("#"+rgb.slice(-6)) : null;
+            return { color };
+          });
+
+          const borders = Array.from(sdoc.getElementsByTagName("borders")[0]?.getElementsByTagName("border") || []).map(n => {
+            const has = ["left","right","top","bottom"].some(s => n.getElementsByTagName(s)[0]?.getAttribute("style"));
+            return { has };
+          });
+
+          const xfs = Array.from(sdoc.getElementsByTagName("cellXfs")[0]?.getElementsByTagName("xf") || []).map(xf => {
+            const fontId = parseInt(xf.getAttribute("fontId") ?? "-1",10);
+            const fillId = parseInt(xf.getAttribute("fillId") ?? "-1",10);
+            const borderId = parseInt(xf.getAttribute("borderId") ?? "-1",10);
+            const align = xf.getElementsByTagName("alignment")[0];
+            const alignment = align ? {
+              horizontal: align.getAttribute("horizontal") || null,
+              vertical: align.getAttribute("vertical") || null,
+              wrapText: align.getAttribute("wrapText") === "1"
+            } : null;
+            return { fontId, fillId, borderId, alignment };
+          });
+
+          const wdoc = parse(wbXml);
+          const sheets = Array.from(wdoc.getElementsByTagName("sheet")).map(s => ({
+            name: s.getAttribute("name"),
+            rid:  s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || s.getAttribute("r:id")
+          }));
+          const rdoc = parse(relsXml);
+          const rels = {};
+          Array.from(rdoc.getElementsByTagName("Relationship")).forEach(r=>{
+            rels[r.getAttribute("Id")] = r.getAttribute("Target");
+          });
+
+          const sheetPathByName = {};
+          sheets.forEach(s => {
+            const tgt = rels[s.rid];
+            if (tgt) sheetPathByName[s.name] = "xl/" + tgt.replace(/^\//,"");
+          });
+
+          const sheetCellXf = {};
+          for (const [sheetName, pth] of Object.entries(sheetPathByName)){
+            const entry = zip[pth];
+            if (!entry) continue;
+            const sxml = td.decode(entry);
+            const doc = parse(sxml);
+            const cells = doc.getElementsByTagName("c");
+            const map = {};
+            for (let i=0;i<cells.length;i++){
+              const c = cells[i];
+              const r = c.getAttribute("r");
+              const s = c.getAttribute("s");
+              if (r && s) map[r] = parseInt(s,10);
             }
-            return f;
-          };
+            sheetCellXf[sheetName] = map;
+          }
 
-          for (let R=r.s.r; R<=r.e.r; ++R){
-            for (let C=r.s.c; C<=r.e.c; ++C){
-              const addr = XLSX.utils.encode_cell({r:R,c:C});
-              const cell = ws[addr];
-              if (!cell) continue;
-              if (cell.f) {
-                let f = stripBookRefs(cell.f);
-                f = expandNames(f);
-                aoa[R - r.s.r][C - r.s.c] = "=" + f;
-              } else {
-                aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
+          return { fonts, fills, borders, xfs, sheetCellXf };
+        }catch(_){
+          return null;
+        }
+      }
+
+      async function buildHF({ primaryPath, linkedFiles }){
+        if (!window.HyperFormula) return { hf: null, sheetOffsets: {}, date1904BySheet: {} };
+
+        const paths = [primaryPath, ...linkedFiles.filter(p => p !== primaryPath)];
+        const workbooks = [];
+        for (const p of paths) {
+          const res = await fetch(p, { cache: "no-store" });
+          if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${p}`);
+          const buf = await res.arrayBuffer();
+          const wb = XLSX.read(buf, { type: "array" });
+          if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
+
+          const names = (wb.Workbook && wb.Workbook.Names) || [];
+          const nameMap = {};
+          names.forEach(n => { if (n && n.Name && n.Ref) nameMap[n.Name] = n.Ref; });
+
+          workbooks.push({ path: p, wb, nameMap });
+        }
+
+        const sheetOffsets = {};
+        const date1904BySheet = {};
+        const sheetsData = {};
+
+        const expandNames = (nameMap, formula) => {
+          if (!nameMap) return formula;
+          let f = formula;
+          for (const [nm, adr] of Object.entries(nameMap)) {
+            const re = new RegExp(`(?<![A-Za-z0-9_])${nm}(?![A-Za-z0-9_])`, "g");
+            f = f.replace(re, adr);
+          }
+          return f;
+        };
+
+        for (const { wb, nameMap } of workbooks) {
+          const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
+          for (const name of wb.SheetNames) {
+            const ws = wb.Sheets[name];
+            const ref = ws["!ref"] || "A1:A1";
+            const r = XLSX.utils.decode_range(ref);
+            const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
+            const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
+
+            for (let R=r.s.r; R<=r.e.r; ++R){
+              for (let C=r.s.c; C<=r.e.c; ++C){
+                const addr = XLSX.utils.encode_cell({r:R,c:C});
+                const cell = ws[addr];
+                if (!cell) continue;
+                if (cell.f) {
+                  let f = stripBookRefs(cell.f);
+                  f = expandNames(nameMap, f);
+                  aoa[R - r.s.r][C - r.s.c] = "=" + f;
+                } else {
+                  aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
+                }
               }
             }
-          }
-          sheetsData[name] = aoa;
-          sheetOffsets[name] = { r0: r.s.r, c0: r.s.c };
-          date1904BySheet[name] = date1904;
-        }
-      }
-
-      hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
-
-      scenarioSel.onchange = () => {
-        try {
-          setScenarioInHF(scenarioSel.value);
-          if (hf && hf.recompute) hf.recompute();
-          renderSheet(currentWS);
-          renderChartsForActiveSheet();
-          status('Scenario updated');
-        } catch(e) {
-          status('Scenario update failed: ' + e.message);
-        }
-      };
-    }
-
-    function initScenarioFromHF(){
-      try {
-        if (!hf) return;
-        const curVal = readScenarioFromHF();
-        if (curVal && SCENARIO_OPTS.includes(curVal)) scenarioSel.value = curVal;
-        const params = new URLSearchParams(location.search);
-        const qSc = params.get('sc');
-        if (qSc && SCENARIO_OPTS.includes(qSc)) {
-          scenarioSel.value = qSc;
-          setScenarioInHF(qSc);
-        }
-      } catch(_) {}
-    }
-
-    function renderSheet(ws){
-      if(!ws) return;
-      const activeSheetName = sheetSel.value;
-      const activeSheetId = hf ? hf.getSheetId(activeSheetName) : null;
-
-      // Range + merges + column widths + row heights
-      const ref = ws['!ref'] || 'A1:A1';
-      const range = XLSX.utils.decode_range(ref);
-      const rowOffset = range.s.r, colOffset = range.s.c;
-      range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
-      range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
-
-      // Merges
-      const merges = ws['!merges'] || [];
-      const mergeTopLeft = new Map();
-      const covered = new Set();
-      merges.forEach(m=>{
-        const top = XLSX.utils.encode_cell(m.s);
-        const rowspan = m.e.r - m.s.r + 1, colspan = m.e.c - m.s.c + 1;
-        mergeTopLeft.set(top, { rowspan, colspan });
-        for(let r=m.s.r;r<=m.e.r;r++){
-          for(let c=m.s.c;c<=m.e.c;c++){
-            const addr = XLSX.utils.encode_cell({r,c});
-            if (addr!==top) covered.add(addr);
+            sheetsData[name] = aoa;
+            sheetOffsets[name] = { r0: r.s.r, c0: r.s.c };
+            date1904BySheet[name] = date1904;
           }
         }
-      });
 
-      // Column widths
-      const colMeta = ws['!cols'] || [];
-      const colWidthPx = [];
-      for(let C=range.s.c; C<=range.e.c; ++C){
-        const width = pxFromCol(colMeta[C]);
-        colWidthPx[C] = width; // may be null
+        const hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: "gpl-v3" });
+        return { hf, sheetOffsets, date1904BySheet };
       }
 
-      const table = document.createElement('table');
-
-      // Head
-      const thead = document.createElement('thead');
-      const trh = document.createElement('tr');
-      const thCorner = document.createElement('th'); thCorner.className='firstcol'; trh.appendChild(thCorner);
-      for(let C=range.s.c; C<=range.e.c; ++C){
-        const th = document.createElement('th');
-        th.textContent = XLSX.utils.encode_col(C);
-        th.setAttribute('scope','col');
-        const wpx = colWidthPx[C];
-        if (wpx){ th.style.width = wpx+'px'; th.style.maxWidth = wpx+'px'; }
-        trh.appendChild(th);
-      }
-      thead.appendChild(trh);
-      table.appendChild(thead);
-
-      // Body
-      const tbody = document.createElement('tbody');
-      const rowMeta = ws['!rows'] || [];
-
-      for(let R=range.s.r; R<=range.e.r; ++R){
-        const tr = document.createElement('tr');
-        const rmeta = rowMeta[R];
-        if (rmeta && (rmeta.hpx || rmeta.hpt)){
-          const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt*96/72);
-          tr.style.height = h + 'px';
+      function applyExcelStyle(td, styleCtx, sheetName, addr){
+        if (!styleCtx) return;
+        const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
+        if (xfIdx == null) return;
+        const xf = styleCtx.xfs[xfIdx] || {};
+        const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
+        if (fill && fill.color) td.style.backgroundColor = fill.color;
+        const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
+        if (font){
+          if (font.bold) td.style.fontWeight = "700";
+          if (font.italic) td.style.fontStyle = "italic";
+          if (font.color) td.style.color = font.color;
+          if (font.sz) td.style.fontSize = font.sz + "px";
+          if (font.name) td.style.fontFamily = font.name + ", " + getComputedStyle(document.body).fontFamily;
         }
-
-        const rowHead = document.createElement('th');
-        rowHead.className='firstcol';
-        rowHead.textContent = (R+1);
-        rowHead.setAttribute('scope','row');
-        tr.appendChild(rowHead);
-
-        for(let C=range.s.c; C<=range.e.c; ++C){
-          const addr = XLSX.utils.encode_cell({r:R,c:C});
-          if (covered.has(addr)) continue;
-
-          const td = document.createElement('td');
-          const cell = ws[addr];
-          td.dataset.address = addr;
-
-          // Merge span if top-left
-          const m = mergeTopLeft.get(addr);
-          if (m){ if (m.rowspan>1) td.rowSpan = m.rowspan; if (m.colspan>1) td.colSpan = m.colspan; }
-
-          // Width
-          const wpx = colWidthPx[C];
-          if (wpx){ td.style.width = wpx+'px'; td.style.maxWidth = wpx+'px'; }
-
-          // Display text
-          let displayText = '';
-          if (showForm.checked && cell && cell.f) {
-            displayText = "=" + (cell.f || '');
-          } else if (hf && activeSheetId != null) {
-            const hfRow = R - rowOffset, hfCol = C - colOffset;
-            const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
-            displayText = formatUsingCell(val, cell, activeSheetName);
-          } else {
-            displayText = cell ? XLSX.utils.format_cell(cell) : '';
-          }
-
-          td.textContent = displayText;
-          td.title = (cell && cell.f) ? ("=" + cell.f)
-                   : (cell && cell.v !== undefined ? String(cell.v) : displayText);
-          if(cell && cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
-
-          applyExcelStyle(td, activeSheetName, addr);
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-      table.appendChild(tbody);
-
-      out.innerHTML = '';
-      out.appendChild(table);
-      currentHTMLTable = table;
-
-      table.addEventListener('click', onCellClick);
-      applyFilter();
-
-      renderChartsForActiveSheet();
-    }
-
-    function onCellClick(ev){
-      const td = ev.target.closest('td');
-      if(!td || !td.dataset.address) return;
-      const addr = td.dataset.address;
-      const cell = currentWS[addr] || {};
-      const fmt  = XLSX.utils.format_cell(cell);
-      const info = {
-        Address: addr,
-        Value: fmt || '',
-        Raw: (cell.v!==undefined ? String(cell.v) : ''),
-        Formula: (cell.f ? "="+cell.f : ''),
-        Type: cell.t || '',
-        Format: cell.z || '',
-        Hyperlink: (cell.l && (cell.l.Target || cell.l.target)) ? (cell.l.Target || cell.l.target) : ''
-      };
-      const kv = document.getElementById('cellInfo');
-      kv.innerHTML = '';
-      Object.entries(info).forEach(([k,v])=>{
-        const b = document.createElement('b'); b.textContent = k;
-        const s = document.createElement('span'); s.textContent = v || '–';
-        kv.appendChild(b); kv.appendChild(s);
-      });
-    }
-
-    function applyFilter(){
-      if(!currentHTMLTable) return;
-      const q = (filterInp.value||'').toLowerCase();
-      const rows = currentHTMLTable.querySelectorAll('tbody tr');
-      rows.forEach(row=>{
-        if(!q){ row.classList.remove('hidden'); return; }
-        const text = row.textContent.toLowerCase();
-        row.classList.toggle('hidden', !text.includes(q));
-      });
-    }
-
-    /* ==== Chart helpers ==== */
-    function destroyAllCharts(){
-      chartInstances.forEach(ch => { try{ ch.destroy(); }catch{} });
-      chartInstances = [];
-    }
-
-    function parseSheetAndRange(a1){
-      if(!a1) return null;
-      const m = a1.match(/^(?:'([^']+)'|([^'!]+))!(\$?[A-Z]+\$?[0-9]+(?::\$?[A-Z]+\$?[0-9]+)?)$/);
-      if(!m) return null;
-      const sheet = (m[1] || m[2]);
-      const range = m[3].replace(/\$/g,'');
-      return { sheet, range };
-    }
-
-    function rangeToVector(vals2d){
-      if(!Array.isArray(vals2d) || !vals2d.length) return [];
-      if (vals2d.length === 1) return vals2d[0].slice();
-      if (vals2d[0].length === 1) return vals2d.map(r => r[0]);
-      return vals2d.flat();
-    }
-
-    function getRangeValues(sheetName, rangeA1){
-      if(!hf) return [];
-      const id = hf.getSheetId(sheetName);
-      if (id == null) return [];
-      const { r0, c0 } = sheetOffsets[sheetName] || { r0:0, c0:0 };
-      const r = XLSX.utils.decode_range(rangeA1);
-      const out = [];
-      for(let R=r.s.r; R<=r.e.r; ++R){
-        const row = [];
-        for(let C=r.s.c; C<=r.e.c; ++C){
-          let v = hf.getCellValue({ sheet:id, row: R - r0, col: C - c0 });
-          if (v && typeof v === 'object' && 'type' in v) v = null; // HF error -> null
-          row.push(v);
-        }
-        out.push(row);
-      }
-      return out;
-    }
-
-    function evalTitle(titleF, fallbackText){
-      if(titleF){
-        const pr = parseSheetAndRange(titleF);
-        if (pr){
-          const vals = getRangeValues(pr.sheet, pr.range);
-          const vec = rangeToVector(vals);
-          if (vec.length) return String(vec[0] ?? '');
+        if (xf.alignment){
+          if (xf.alignment.horizontal) td.style.textAlign = xf.alignment.horizontal;
+          if (xf.alignment.vertical)   td.style.verticalAlign = xf.alignment.vertical;
+          if (xf.alignment.wrapText){ td.style.whiteSpace = "normal"; td.style.wordBreak = "break-word"; }
         }
       }
-      return fallbackText || '';
-    }
-    function evalSeriesName(s){
-      if (s.nameF){
-        const pr = parseSheetAndRange(s.nameF);
-        if (pr){
-          const vals = getRangeValues(pr.sheet, pr.range);
-          const vec = rangeToVector(vals);
-          if (vec.length) return String(vec[0] ?? '');
+
+      function pxFromCol(col){
+        if (!col) return null;
+        if (col.wpx) return Math.round(col.wpx);
+        if (col.wch) return Math.round(col.wch * 7 + 5);
+        return null;
+      }
+
+      function formatUsingCell(val, cell, sheetName, date1904BySheet){
+        if (val === null || val === undefined) return "";
+        if (val && typeof val === "object" && "type" in val) {
+          if (cell && typeof cell.w === "string" && cell.w.trim()) return cell.w;
+          const map = { NAME:"#NAME?", REF:"#REF!", DIV_BY_ZERO:"#DIV/0!", VALUE:"#VALUE!", NUM:"#NUM!", NA:"#N/A" };
+          return map[val.type] || "#ERROR";
         }
-      }
-      if (s.nameV) return s.nameV;
-      return '';
-    }
-
-    function excelSerialToDate(serial, use1904){
-      if (serial == null || isNaN(serial)) return null;
-      let s = Number(serial);
-      if (use1904) s += 1462;
-      const epoch = Date.UTC(1899, 11, 30); // Excel's epoch (with 1900 leap-year quirk)
-      return new Date(epoch + s * 86400000);
-    }
-
-    function renderChartsForActiveSheet(){
-      const sheet = sheetSel.value;
-      destroyAllCharts();
-      chartsOut.innerHTML = '';
-
-      const defs = chartsBySheet[sheet] || [];
-      if (!defs.length){
-        chartsOut.innerHTML = '<div class="meta">No charts found on this sheet.</div>';
-        return;
-      }
-
-      // Helpers to resolve data
-      function resolveLabelsWithSource(firstSeries){
-        if (firstSeries?.catRef){
-          const pr = parseSheetAndRange(firstSeries.catRef);
-          if (pr) return { labels: rangeToVector(getRangeValues(pr.sheet, pr.range)), sheet: pr.sheet };
-        }
-        if (Array.isArray(firstSeries?.catLit)) return { labels: firstSeries.catLit.slice(), sheet: sheet };
-        return { labels: [], sheet: sheet };
-      }
-      function resolveY(s){
-        if (s.yRef){
-          const pr = parseSheetAndRange(s.yRef);
-          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
-        }
-        if (Array.isArray(s.yLit)) return s.yLit.map(Number);
-        return [];
-      }
-      function resolveX(s){
-        if (s.xRef){
-          const pr = parseSheetAndRange(s.xRef);
-          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range));
-        }
-        if (Array.isArray(s.xLit)) return s.xLit.slice();
-        return [];
-      }
-      function resolveZ(s){
-        if (s.zRef){
-          const pr = parseSheetAndRange(s.zRef);
-          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
-        }
-        if (Array.isArray(s.zLit)) return s.zLit.map(Number);
-        return [];
-      }
-
-      // Histogram helper (Sturges rule)
-      function buildHistogram(values){
-        const nums = values.map(Number).filter(v => isFinite(v));
-        if (!nums.length) return { labels:[], counts:[] };
-        const min = Math.min(...nums), max = Math.max(...nums);
-        const k = Math.max(1, Math.ceil(Math.log2(nums.length) + 1));
-        const width = (max - min) / k || 1;
-        const counts = new Array(k).fill(0);
-        nums.forEach(v => {
-          let idx = Math.floor((v - min) / width);
-          if (idx >= k) idx = k - 1;
-          if (idx < 0) idx = 0;
-          counts[idx]++;
-        });
-        const labels = counts.map((_,i)=>{
-          const a = min + i*width, b = a + width;
-          return `${a.toFixed(2)}–${b.toFixed(2)}`;
-        });
-        return { labels, counts };
-      }
-
-      defs.slice(0, 12).forEach((def, idx) => {
-        const title = evalTitle(def.titleF, def.titleText);
-        const cnv = document.createElement('canvas');
-        cnv.setAttribute('aria-label', title || ('Chart '+(idx+1)));
-        chartsOut.appendChild(cnv);
-
-        if (def.type === 'pie' || def.type === 'doughnut'){
-          const first = def.series[0] || {};
-          const { labels } = resolveLabelsWithSource(first);
-          const data = resolveY(first);
-          const cfg = {
-            type: def.type,
-            data: { labels: labels.map(v=>String(v ?? '')), datasets: [{ label: evalSeriesName(first) || title || 'Series', data }] },
-            options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
-          };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-
-        } else if (def.type === 'scatter'){
-          const datasets = def.series.map((s, i) => {
-            const xs = resolveX(s).map(Number);
-            const ys = resolveY(s);
-            const len = Math.min(xs.length, ys.length);
-            const data = Array.from({length: len}, (_,k)=>({x: xs[k], y: ys[k]}));
-            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data, showLine:false };
-          });
-          const cfg = {
-            type: 'scatter',
-            data: { datasets },
-            options: { responsive:true, scales:{ x:{ type:'linear' }, y:{ type:'linear' } }, plugins:{ title:{ display: !!title, text: title } } }
-          };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-
-        } else if (def.type === 'bubble'){
-          const datasets = def.series.map((s, i) => {
-            const xs = resolveX(s).map(Number);
-            const ys = resolveY(s);
-            const zs = resolveZ(s);
-            const n = Math.min(xs.length, ys.length, zs.length || Infinity);
-            const zMin = Math.min(...zs.filter(isFinite), 0), zMax = Math.max(...zs.filter(isFinite), 1);
-            const size = (z)=> {
-              if (!isFinite(z) || zMax===zMin) return 6;
-              return 4 + 12 * (z - zMin) / (zMax - zMin);
-            };
-            const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k], r: size(zs[k])}));
-            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data };
-          });
-          const cfg = { type: 'bubble', data: { datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-
-        } else if (def.type === 'radar'){
-          const first = def.series[0] || {};
-          const { labels } = resolveLabelsWithSource(first);
-          const datasets = def.series.map((s, i) => ({
-            label: evalSeriesName(s) || ('Series ' + (i+1)),
-            data: resolveY(s)
-          }));
-          const cfg = { type: 'radar', data: { labels: labels.map(v=>String(v ?? '')), datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-
-        } else if (def.type === 'histogram'){
-          // Use first series values; if Excel encoded bins as categories, we’ll just plot them directly as bar
-          const s0 = def.series[0] || {};
-          const values = resolveY(s0).length ? resolveY(s0) : resolveX(s0).map(Number);
-          let labels = [], counts = [];
-          if (resolveX(s0).length && resolveY(s0).length && resolveX(s0).length === resolveY(s0).length) {
-            // Already binned (categories + counts)
-            labels = resolveX(s0).map(v=>String(v ?? ''));
-            counts = resolveY(s0);
-          } else {
-            const h = buildHistogram(values);
-            labels = h.labels; counts = h.counts;
-          }
-          const cfg = {
-            type: 'bar',
-            data: { labels, datasets:[{ label: evalSeriesName(s0) || title || 'Histogram', data: counts }] },
-            options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } }
-          };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-
-        } else if (def.type === 'stock'){
-          // Expect Open/High/Low/Close in series names or in O,H,L,C order
-          const s = def.series;
-          const nameMap = {};
-          s.forEach((ser, i)=>{
-            const nm = (evalSeriesName(ser) || '').toLowerCase();
-            if (/open/.test(nm)) nameMap.open = i;
-            else if (/high/.test(nm)) nameMap.high = i;
-            else if (/low/.test(nm)) nameMap.low = i;
-            else if (/close|last/.test(nm)) nameMap.close = i;
-          });
-          // Fallback to positional mapping if names missing
-          const idxOpen = nameMap.open ?? 0;
-          const idxHigh = nameMap.high ?? 1;
-          const idxLow  = nameMap.low  ?? 2;
-          const idxClose= nameMap.close?? 3;
-
-          const refSeries = s[idxOpen] || s[0] || {};
-          const { labels, sheet: labelSheet } = resolveLabelsWithSource(refSeries);
-          const use1904 = !!date1904BySheet[labelSheet];
-
-          const opens = (s[idxOpen]) ? resolveY(s[idxOpen]) : [];
-          const highs = (s[idxHigh]) ? resolveY(s[idxHigh]) : [];
-          const lows  = (s[idxLow ]) ? resolveY(s[idxLow ]) : [];
-          const closes= (s[idxClose])? resolveY(s[idxClose]) : [];
-          const n = Math.min(labels.length, opens.length, highs.length, lows.length, closes.length);
-
-          const data = Array.from({length:n}, (_,i)=>{
-            const L = labels[i];
-            let x = L;
-            if (typeof L === 'number') {
-              const d = excelSerialToDate(L, use1904);
-              if (d) x = d.getTime();
-            } else if (typeof L === 'string') {
-              const d = new Date(L);
-              if (!isNaN(d)) x = d.getTime();
-            }
-            return { x, o: +opens[i], h: +highs[i], l: +lows[i], c: +closes[i] };
-          });
-
-          const cfg = {
-            type: 'ohlc', // or 'candlestick'
-            data: { datasets: [{ label: title || 'OHLC', data }] },
-            options: {
-              responsive: true,
-              parsing: false,
-              scales: { x: { type: 'time', time: { unit: 'day' } } },
-              plugins: { title: { display: !!title, text: title } }
-            }
-          };
+        if (cell && cell.z !== undefined) {
           try{
-            chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-          }catch(e){
-            // If plugin is missing, degrade gracefully to bar chart of Close
-            const fallback = {
-              type: 'bar',
-              data: { labels: labels.map(v=>String(v ?? '')), datasets:[{ label: 'Close', data: closes }] },
-              options: { responsive:true, plugins:{ title:{ display:true, text: (title? title+' (Close only)' : 'Close') } } }
-            };
-            chartInstances.push(new Chart(cnv.getContext('2d'), fallback));
-          }
-
-        } else {
-          // line / area / bar
-          const first = def.series[0] || {};
-          const { labels } = resolveLabelsWithSource(first);
-          const datasets = def.series.map((s, i) => ({
-            label: evalSeriesName(s) || ('Series ' + (i+1)),
-            data: resolveY(s)
-          }));
-          const chartType = (def.type === 'area') ? 'line' : (def.type === 'bar' ? 'bar' : 'line');
-          const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
-          if (chartType === 'line' && def.type === 'area') {
-            options.fill = true;
-          }
-          const cfg = {
-            type: chartType,
-            data: { labels: labels.map(v=>String(v ?? '')), datasets },
-            options
-          };
-          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+            let v = val;
+            if (isDateFmt(cell.z) && date1904BySheet[sheetName]) v = Number(v) + 1462;
+            return XLSX.SSF.format(cell.z, v);
+          }catch{}
         }
-      });
-    }
-
-    // Deep-link support
-    (function initFromQuery(){
-      const params = new URLSearchParams(location.search);
-      const qFile  = params.get('file');
-      const qSheet = params.get('sheet');
-      const qF     = params.get('f');
-      const qSc    = params.get('sc');
-      if(qF === '1') showForm.checked = true;
-
-      if (qSc && SCENARIO_OPTS.includes(qSc)) scenarioSel.value = qSc;
-
-      if(qFile){
-        const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
-        if(match) fileSel.value = match.path;
+        if (cell && typeof val === "number" && typeof cell.w === "string" && cell.w.trim()){
+          const w = cell.w, hasPct = /%/.test(w), hasGBP = /£/.test(w);
+          const mDec = w.match(/\.([0-9]+)/); const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
+          const useGrouping = /,/.test(w) || Math.abs(val) >= 1000;
+          const opts = { maximumFractionDigits: decimals, minimumFractionDigits: decimals, useGrouping };
+          if (hasGBP){ opts.style = "currency"; opts.currency = "GBP"; }
+          if (hasPct){ opts.style = "percent"; }
+          try{ return new Intl.NumberFormat("en-GB", opts).format(val); }catch{}
+        }
+        return (typeof val === "number") ? new Intl.NumberFormat("en-GB").format(val) : String(val);
       }
-      loadWorkbook(fileSel.value).then(()=>{
-        if(qSheet && currentWB.SheetNames.includes(qSheet)){
-          sheetSel.value = qSheet;
-          currentWS = currentWB.Sheets[qSheet];
-          renderSheet(currentWS);
+
+      function renderSheet({ container, ws, sheetName, hf, styleCtx, showFormulae, sheetOffsets, date1904BySheet, MAX_R, MAX_C }){
+        const ref = ws["!ref"] || "A1:A1";
+        const range = XLSX.utils.decode_range(ref);
+        const rowOffset = range.s.r, colOffset = range.s.c;
+        range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
+        range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
+
+        const merges = ws["!merges"] || [];
+        const mergeTopLeft = new Map();
+        const covered = new Set();
+        merges.forEach(m=>{
+          const top = XLSX.utils.encode_cell(m.s);
+          const rowspan = m.e.r - m.s.r + 1, colspan = m.e.c - m.s.c + 1;
+          mergeTopLeft.set(top, { rowspan, colspan });
+          for(let r=m.s.r;r<=m.e.r;r++){
+            for(let c=m.s.c;c<=m.e.c;c++){
+              const addr = XLSX.utils.encode_cell({r,c});
+              if (addr!==top) covered.add(addr);
+            }
+          }
+        });
+
+        const colMeta = ws["!cols"] || [];
+        const colWidthPx = [];
+        for(let C=range.s.c; C<=range.e.c; ++C){
+          const width = pxFromCol(colMeta[C]);
+          colWidthPx[C] = width;
         }
-      });
+
+        const table = document.createElement("table");
+
+        // Head
+        const thead = document.createElement("thead");
+        const trh = document.createElement("tr");
+        const thCorner = document.createElement("th"); thCorner.className="firstcol"; trh.appendChild(thCorner);
+        for(let C=range.s.c; C<=range.e.c; ++C){
+          const th = document.createElement("th");
+          th.textContent = XLSX.utils.encode_col(C);
+          th.setAttribute("scope","col");
+          const wpx = colWidthPx[C];
+          if (wpx){ th.style.width = wpx+"px"; th.style.maxWidth = wpx+"px"; }
+          trh.appendChild(th);
+        }
+        thead.appendChild(trh);
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement("tbody");
+        const rowMeta = ws["!rows"] || [];
+
+        const activeSheetId = hf ? hf.getSheetId(sheetName) : null;
+
+        for(let R=range.s.r; R<=range.e.r; ++R){
+          const tr = document.createElement("tr");
+          const rmeta = rowMeta[R];
+          if (rmeta && (rmeta.hpx || rmeta.hpt)){
+            const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt*96/72);
+            tr.style.height = h + "px";
+          }
+
+          const rowHead = document.createElement("th");
+          rowHead.className="firstcol";
+          rowHead.textContent = (R+1);
+          rowHead.setAttribute("scope","row");
+          tr.appendChild(rowHead);
+
+          for(let C=range.s.c; C<=range.e.c; ++C){
+            const addr = XLSX.utils.encode_cell({r:R,c:C});
+            if (covered.has(addr)) continue;
+            const td = document.createElement("td");
+            const cell = ws[addr];
+            td.dataset.address = addr;
+
+            const m = mergeTopLeft.get(addr);
+            if (m){ if (m.rowspan>1) td.rowSpan = m.rowspan; if (m.colspan>1) td.colSpan = m.colspan; }
+
+            const wpx = colWidthPx[C];
+            if (wpx){ td.style.width = wpx+"px"; td.style.maxWidth = wpx+"px"; }
+
+            let displayText = "";
+            if (showFormulae && cell && cell.f) {
+              displayText = "=" + (cell.f || "");
+            } else if (hf && activeSheetId != null) {
+              const hfRow = R - rowOffset, hfCol = C - colOffset;
+              const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
+              displayText = formatUsingCell(val, cell, sheetName, date1904BySheet);
+            } else {
+              displayText = cell ? XLSX.utils.format_cell(cell) : "";
+            }
+
+            td.textContent = displayText;
+            td.title = (cell && cell.f) ? ("=" + cell.f)
+                     : (cell && cell.v !== undefined ? String(cell.v) : displayText);
+            if(cell && cell.t === "n" && !cell.f) td.style.textAlign = "right";
+
+            applyExcelStyle(td, styleCtx, sheetName, addr);
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+
+        // Mount
+        container.innerHTML = "";
+        container.appendChild(table);
+        return { table };
+      }
+
+      window.deps = { loadWorkbook, extractStyles, buildHF, renderSheet };
     })();
   </script>
 
-  <!-- Back button handler that forces same-origin root -->
+  <!-- Viewer UI (module) -->
+  <script type="module" src="./viewer.js"></script>
+
+  <!-- Back button handler identical to backup -->
   <script>
     (function () {
       const el = document.getElementById('backToLanding');
