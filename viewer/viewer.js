@@ -336,45 +336,30 @@ function loadChartLibsOnce(){
   chartLibPromise = (async ()=>{
     await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
-
-    let pluginModule = null;
-    try{
-      pluginModule = await import("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.esm.js");
-    }catch(e){
-      console.warn("[charts] Failed to import financial plugin via ESM:", e);
-    }
-
+    await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
     if (window.Chart && window.Chart.register) {
-      const registrables = [];
-
-      if (pluginModule && typeof pluginModule === "object") {
-        Object.values(pluginModule).forEach(obj => {
-          if (obj && (obj.id || obj.prototype?.id)) registrables.push(obj);
-        });
-      }
-
-      // Fallback: if module failed but global auto-registered, nothing to do.
-      if (!registrables.length && window.Chart.registry?.getController("ohlc")) {
-        console.info("[charts] Financial plugin already registered (ohlc controller present).");
-        return;
-      }
-
-      if (registrables.length) {
-        const seen = new Set();
-        const unique = registrables.filter(obj => {
-          const key = obj.id || obj.prototype?.id || obj.name || String(obj);
-          if (seen.has(key)) return false;
+      const seen = new Set();
+      function tryAdd(obj){
+        if (!obj) return;
+        const key = obj.id || obj.prototype?.id || obj.name;
+        if (key && !seen.has(key)) {
           seen.add(key);
-          return true;
-        });
-        try{
-          window.Chart.register(...unique);
-          console.info("[charts] Registered financial plugin controllers:", unique.map(o => o.id || o.name || "unknown"));
-        }catch(e){
-          console.warn("[charts] Failed to register financial plugin controllers:", e);
+          registrables.push(obj);
         }
-      } else {
-        console.warn("[charts] Financial plugin not available; stock charts will fall back.");
+      }
+      const registrables = [];
+      const globalExports = window["chartjs-chart-financial"];
+      if (globalExports && typeof globalExports === "object") {
+        Object.values(globalExports).forEach(tryAdd);
+      }
+      const names = [
+        "FinancialController","CandlestickController","OhlcController",
+        "FinancialElement","CandlestickElement","OhlcElement",
+        "ScaledFinancialElement","FinancialScale"
+      ];
+      names.forEach(n => tryAdd(window.Chart[n]));
+      if (registrables.length) {
+        try { window.Chart.register(...registrables); } catch(_) {}
       }
     }
   })();
@@ -469,11 +454,7 @@ function excelSerialToDate(serial, use1904){
 /* Extract charts from XLSX ArrayBuffer */
 async function extractChartsFromXLSX(arrayBuffer){
   try{
-    const fflateLib = globalThis.fflate;
-    if (!fflateLib || typeof fflateLib.unzipSync !== "function") {
-      throw new Error("fflate is not defined (ensure the UMD script loads before viewer.js)");
-    }
-    const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
+    const zipRaw = fflate.unzipSync(new Uint8Array(arrayBuffer));
     // case-insensitive view over zip entries
     const zip = {};
     Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
@@ -954,12 +935,6 @@ async function renderChartsForActiveSheet(){
     } else if (def.type === "stock"){
       // Expect datasets for O/H/L/C; accept either named series or positional order
       const s = def.series;
-      if (!s || !s.length) {
-        console.warn("[charts] Stock chart has no series");
-        setChartsStatus("Stock chart: no data");
-        return;
-      }
-      
       const nameMap = {};
       s.forEach((ser, i)=>{
         const nm = (evalSeriesName(ser) || "").toLowerCase();
@@ -988,12 +963,6 @@ async function renderChartsForActiveSheet(){
       const closes= (s[idxClose])? resolveY(s[idxClose]) : [];
       const n = Math.min(labels.length, opens.length, highs.length, lows.length, closes.length);
 
-      if (n === 0) {
-        console.warn("[charts] Stock chart: no valid data points", {labels: labels.length, opens: opens.length, highs: highs.length, lows: lows.length, closes: closes.length});
-        setChartsStatus("Stock chart: insufficient data");
-        return;
-      }
-
       const use1904 = !!date1904BySheet[sheet];
       const data = Array.from({length:n}, (_,i)=>{
         const L = labels[i];
@@ -1003,9 +972,9 @@ async function renderChartsForActiveSheet(){
           if (d) x = d.getTime();
         } else if (typeof L === "string") {
           const d = new Date(L);
-          if (!isNaN(d.getTime())) x = d.getTime();
+          if (!isNaN(d)) x = d.getTime();
         }
-        return { x, o: +opens[i] || 0, h: +highs[i] || 0, l: +lows[i] || 0, c: +closes[i] || 0 };
+        return { x, o: +opens[i], h: +highs[i], l: +lows[i], c: +closes[i] };
       });
 
       let cfg = {
@@ -1019,12 +988,8 @@ async function renderChartsForActiveSheet(){
         }
       };
       try{
-        if (!window.Chart || !window.Chart.registry || !window.Chart.registry.getController("ohlc")) {
-          throw new Error("OHLC controller not registered");
-        }
         chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
       }catch(e){
-        console.warn("[charts] OHLC chart failed, falling back:", e);
         // Degrade gracefully if plugin unavailable
         cfg = {
           type: "bar",
