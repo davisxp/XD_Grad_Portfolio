@@ -81,7 +81,7 @@
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
     @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
 
-    /* NEW: charts sizing */
+    /* Charts sizing */
     #chartsOut canvas{width:100%; height:260px; display:block; margin:10px 0;}
   </style>
   <!-- Sheet parser -->
@@ -90,12 +90,15 @@
   <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
   <!-- Tiny unzipper to read styles.xml for real Excel colours/fonts/borders -->
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
-  <!-- NEW: Chart.js for chart rendering -->
+  <!-- Chart.js core -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Time adapter (needed for financial time scales) -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <!-- Financial charts (OHLC / Candlestick) -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js"></script>
 </head>
 <body class="excel">
   <header>
-    <!-- CHANGED: add id and neutral href so JS controls navigation -->
     <a id="backToLanding" class="btn" href="#">Back to landing page</a>
     <h1>Live Spreadsheet Viewer</h1>
     <div class="spacer"></div>
@@ -135,10 +138,9 @@
         </div>
       </div>
 
-      <!-- NEW: Charts preview panel -->
       <div class="panel" id="chartsPanel">
         <h2>Charts</h2>
-        <div class="meta">Charts parsed from the workbook’s drawing parts. Supported: line, bar, scatter, pie.</div>
+        <div class="meta">Charts parsed from the workbook drawings. Supported: line, bar/column, area, scatter, bubble, pie/doughnut, radar, histogram, OHLC/candlestick.</div>
         <div id="chartsOut"></div>
       </div>
     </aside>
@@ -153,8 +155,8 @@
     const files = [
       { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
       { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
-	  { path: "../models/Comps_Precs.xlsx", label: "Comparables and Precedent Valuations" },
-	  { path: "../models/Valuation_Overview.xlsx", label: "Valuation Overview" }
+      { path: "../models/Comps_Precs.xlsx",       label: "Comparables and Precedent Valuations" },
+      { path: "../models/Valuation_Overview.xlsx",label: "Valuation Overview" }
     ];
 
     // === Scenario bindings (multiple sheets/cells) ===
@@ -162,7 +164,7 @@
     const SCENARIOS = [
       { sheet: 'DCF',  targets: ['J22','J34'] },
       { sheet: 'SOTP', targets: ['B28','H28','N28'] },
-	  { sheet: 'rNPV', targets: ['A1'] }
+      { sheet: 'rNPV', targets: ['A1'] }
     ];
 
     // === External files needed for recalc ===
@@ -182,7 +184,6 @@
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
 
-    /* NEW: charts DOM */
     const chartsOut = document.getElementById('chartsOut');
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
@@ -191,8 +192,7 @@
     const date1904BySheet = {};   // { [sheetName]: boolean }
     let styleCtx = null;          // Excel styles from styles.xml (for current workbook)
 
-    /* NEW: charts context */
-    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, xLit?, yRef?, yLit?, catRef?, catLit?}]} ] }
+    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, xLit?, yRef?, yLit?, zRef?, zLit?, catRef?, catLit?}]} ] }
     let chartInstances = [];      // active Chart.js instances for cleanup
 
     // Populate dropdowns
@@ -241,7 +241,6 @@
 
     function formatUsingCell(val, cell, sheetName){
       if (val === null || val === undefined) return '';
-      // Fallback to Excel cached text if HF returns an error object
       if (val && typeof val === 'object' && 'type' in val) {
         if (cell && typeof cell.w === 'string' && cell.w.trim()) return cell.w;
         const map = { NAME:'#NAME?', REF:'#REF!', DIV_BY_ZERO:'#DIV/0!', VALUE:'#VALUE!', NUM:'#NUM!', NA:'#N/A' };
@@ -386,7 +385,7 @@
       }
     }
 
-    /* === NEW: Extract chart definitions from the XLSX === */
+    /* === Extract chart definitions from the XLSX (supports classic and Office 2016+ chartEx) === */
     async function extractChartsFromXLSX(arrayBuffer){
       try{
         const bytes = new Uint8Array(arrayBuffer);
@@ -417,10 +416,8 @@
           return { name: s.name, path, kind };
         });
 
-        // Helper: localName query
+        // Query helpers
         const byLocal = (root, name) => Array.from(root.getElementsByTagName('*')).filter(n => n.localName === name);
-
-        // Helper: parse literal values in chart XML (numLit/strLit)
         function readLit(parent, litTag){
           const lit = byLocal(parent, litTag)[0];
           if(!lit) return null;
@@ -434,27 +431,37 @@
           return vals;
         }
 
-        // Helper: parse a chart part into our neutral definition
         function parseChartPart(chartXmlU8){
           const cDoc = parse(td.decode(chartXmlU8));
-          // Support both classic c:chart and modern cx:chart (Office 2016+)
+
+          // Include extended types (Excel 2016+)
           const typeOrder = [
-            'lineChart','line3DChart','barChart','bar3DChart','columnChart','areaChart','area3DChart',
-            'scatterChart','bubbleChart','pieChart','pie3DChart','doughnutChart','stockChart','radarChart'
+            'lineChart','line3DChart',
+            'barChart','bar3DChart','columnChart',
+            'areaChart','area3DChart',
+            'scatterChart','bubbleChart',
+            'pieChart','pie3DChart','doughnutChart',
+            'radarChart',
+            'histogramChart',      // Office 2016
+            'stockChart',          // OHLC variants
+            'waterfallChart','funnelChart','boxWhiskerChart','sunburstChart','treemapChart'
           ];
-          // Search anywhere in the doc for first matching chart type (works for both c: and cx:)
           const typeNode = typeOrder.map(t => byLocal(cDoc, t)[0]).find(Boolean);
           if(!typeNode) return null;
 
           let type = typeNode.localName;
-          if (/line/i.test(type)) type = 'line';
+          if (/histogram/i.test(type)) type = 'histogram';
+          else if (/stock/i.test(type)) type = 'stock';
+          else if (/bubble/i.test(type)) type = 'bubble';
+          else if (/radar/i.test(type)) type = 'radar';
+          else if (/doughnut/i.test(type)) type = 'doughnut';
+          else if (/pie/i.test(type)) type = 'pie';
+          else if (/scatter/i.test(type)) type = 'scatter';
           else if (/bar|column/i.test(type)) type = 'bar';
-          else if (/scatter|bubble/i.test(type)) type = 'scatter';
-          else if (/pie|doughnut/i.test(type)) type = 'pie';
-          else if (/area|stock|radar/i.test(type)) type = 'line';
+          else if (/area/i.test(type)) type = 'area';
+          else if (/line/i.test(type)) type = 'line';
           else type = 'line';
 
-          // Title (either strRef -> f, or inline v)
           let titleF = null, titleText = null;
           const titleNode = byLocal(cDoc, 'title')[0];
           if(titleNode){
@@ -468,12 +475,11 @@
             }
           }
 
-          // Series nodes: handle both c:ser and cx:series
+          // Series nodes (classic c:ser and chartEx cx:series)
           const serNodes = byLocal(typeNode, 'ser').concat(byLocal(typeNode, 'series'));
           const series = [];
           for (const sN of serNodes){
             let nameF = null, nameV = null;
-            // Try classic tx then cx:tx
             const tx = byLocal(sN, 'tx')[0];
             if(tx){
               const strRef = byLocal(tx, 'strRef')[0];
@@ -485,8 +491,6 @@
                 nameV = vNode.textContent.trim();
               }
             }
-
-            // Helper to pick either *Ref(f) or *Lit(values) for a given parent list
             function pickRefOrLit(parentNames){
               let refF = null, lit = null;
               for(const nm of parentNames){
@@ -497,24 +501,20 @@
                   const f = byLocal(numRef, 'f')[0];
                   if (f && f.textContent) { refF = f.textContent.trim(); break; }
                 }
-                // fallbacks (numLit/strLit)
                 lit = readLit(p, 'numLit') || readLit(p, 'strLit') || lit;
               }
               return { refF, lit };
             }
-
-            // Categories or X and Y (scatter uses xVal/yVal)
-            const cat = pickRefOrLit(['cat','xVal']);
-            const y   = pickRefOrLit(['val','yVal']);
+            const cat = pickRefOrLit(['cat','xVal']);    // category or x
+            const y   = pickRefOrLit(['val','yVal']);    // value or y
+            const z   = pickRefOrLit(['bubbleSize']);    // bubble size (if bubbleChart)
 
             series.push({
               nameF, nameV,
-              catRef: cat.refF || null,
-              catLit: Array.isArray(cat.lit) ? cat.lit : null,
-              xRef:   cat.refF || null,             // alias for scatter
-              xLit:   Array.isArray(cat.lit) ? cat.lit : null,
-              yRef:   y.refF || null,
-              yLit:   Array.isArray(y.lit) ? y.lit.map(Number) : null
+              catRef: cat.refF || null, catLit: Array.isArray(cat.lit) ? cat.lit : null,
+              xRef:   cat.refF || null, xLit:  Array.isArray(cat.lit) ? cat.lit : null,
+              yRef:   y.refF || null,   yLit:  Array.isArray(y.lit) ? y.lit.map(Number) : null,
+              zRef:   z.refF || null,   zLit:  Array.isArray(z.lit) ? z.lit.map(Number) : null
             });
           }
 
@@ -524,7 +524,7 @@
         const chartsBySheet = {};
 
         for (const meta of sheetMeta){
-          // 1) Charts embedded on a WORKSHEET via drawings (may be multiple drawings)
+          // 1) Charts embedded on a WORKSHEET via drawings
           if (meta.kind === 'worksheet'){
             const sheetRelsPath = 'xl/worksheets/_rels/' + meta.path.split('/').pop() + '.rels';
             const relEntry = zip[sheetRelsPath];
@@ -538,7 +538,7 @@
                 const drawingXmlEntry = zip[drawingPath];
                 if(!drawingXmlEntry) continue;
 
-                // map drawing rels rId -> chart or chartEx xml path
+                // map drawing rels rId -> chart or chartEx xml
                 const drawingRelsPath = 'xl/drawings/_rels/' + drawingPath.split('/').pop() + '.rels';
                 const dRelEntry = zip[drawingRelsPath];
                 if(!dRelEntry) continue;
@@ -546,13 +546,13 @@
                 const dMap = {};
                 Array.from(dRelsDoc.getElementsByTagName('Relationship')).forEach(r=>{
                   const id = r.getAttribute('Id');
-                  const tgt = (r.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,''); // e.g. ../charts/chart1.xml or ../charts/chartEx1.xml
+                  const tgt = (r.getAttribute('Target')||'').replace(/^\//,'').replace(/^\.\.\//,'');
                   dMap[id] = 'xl/' + tgt;
                 });
 
-                // find any <*:chart r:id="..."> occurrences in drawing (c:chart or cx:chart)
+                // any <*:chart r:id="..."> (c:chart or cx:chart)
                 const drawingDoc = parse(td.decode(drawingXmlEntry));
-                const chartElems = byLocal(drawingDoc, 'chart'); // catches c:chart and cx:chart by localName
+                const chartElems = byLocal(drawingDoc, 'chart');
                 for(const cEl of chartElems){
                   const rid = cEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || cEl.getAttribute('r:id');
                   const chartPath = dMap[rid];
@@ -566,7 +566,7 @@
             }
           }
 
-          // 2) Charts on a CHARTSHEET (direct relationship to a chart or chartEx part)
+          // 2) Charts on a CHARTSHEET
           if (meta.kind === 'chartsheet'){
             const csRelsPath = 'xl/chartsheets/_rels/' + meta.path.split('/').pop() + '.rels';
             const csRelsEntry = zip[csRelsPath];
@@ -598,10 +598,8 @@
       const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
       if (xfIdx == null) return;
       const xf = styleCtx.xfs[xfIdx] || {};
-      // Fill
       const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
       if (fill && fill.color) td.style.backgroundColor = fill.color;
-      // Font
       const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
       if (font){
         if (font.bold) td.style.fontWeight = '700';
@@ -610,7 +608,6 @@
         if (font.sz) td.style.fontSize = font.sz + 'px';
         if (font.name) td.style.fontFamily = font.name + ', ' + getComputedStyle(document.body).fontFamily;
       }
-      // Alignment
       if (xf.alignment){
         if (xf.alignment.horizontal) td.style.textAlign = xf.alignment.horizontal;
         if (xf.alignment.vertical)   td.style.verticalAlign = xf.alignment.vertical;
@@ -641,17 +638,12 @@
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
 
-        // Parse with SheetJS for data + formulas
         currentWB = XLSX.read(buf, { type: 'array' });
         if (currentWB && currentWB.SSF) XLSX.SSF.load(currentWB.SSF);
 
-        // Extract real Excel styles/xf indices from the raw zip (current workbook only)
         styleCtx = await extractStylesFromXLSX(buf);
-
-        // NEW: Extract charts/drawings
         chartsBySheet = await extractChartsFromXLSX(buf);
 
-        // Populate sheets
         currentWB.SheetNames.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s; opt.textContent = s;
@@ -661,13 +653,9 @@
         sheetSel.value = initial;
         currentWS = currentWB.Sheets[initial];
 
-        // Build HyperFormula model (current + linked files)
         await buildHF();
-
-        // Scenario init
         initScenarioFromHF();
 
-        // Render
         renderSheet(currentWS);
         status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
         syncLink();
@@ -690,12 +678,11 @@
         const wb = XLSX.read(buf, { type: 'array' });
         if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
 
-        // collect Names per workbook
         const nameMap = (function collectNameMap(wb){
           const names = (wb.Workbook && wb.Workbook.Names) || [];
           const map = {};
           names.forEach(n => {
-            if (n && n.Name && n.Ref) map[n.Name] = n.Ref; // e.g. "Inputs!$B$6"
+            if (n && n.Name && n.Ref) map[n.Name] = n.Ref;
           });
           return map;
         })(wb);
@@ -713,7 +700,6 @@
           const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
           const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
 
-          // helper: expand workbook Names in a formula
           const expandNames = (formula) => {
             if (!nameMap) return formula;
             let f = formula;
@@ -731,17 +717,16 @@
               if (!cell) continue;
               if (cell.f) {
                 let f = stripBookRefs(cell.f);
-                f = expandNames(f);                 // <-- expand workbook Names
+                f = expandNames(f);
                 aoa[R - r.s.r][C - r.s.c] = "=" + f;
               } else {
                 aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
               }
             }
           }
-          const key = name;
-          sheetsData[key] = aoa;
-          sheetOffsets[key] = { r0: r.s.r, c0: r.s.c };
-          date1904BySheet[key] = date1904;
+          sheetsData[name] = aoa;
+          sheetOffsets[name] = { r0: r.s.r, c0: r.s.c };
+          date1904BySheet[name] = date1904;
         }
       }
 
@@ -750,9 +735,9 @@
       scenarioSel.onchange = () => {
         try {
           setScenarioInHF(scenarioSel.value);
-		  if (hf && hf.recompute) hf.recompute();
+          if (hf && hf.recompute) hf.recompute();
           renderSheet(currentWS);
-          renderChartsForActiveSheet(); /* NEW: refresh charts on scenario change */
+          renderChartsForActiveSheet();
           status('Scenario updated');
         } catch(e) {
           status('Scenario update failed: ' + e.message);
@@ -878,25 +863,20 @@
                    : (cell && cell.v !== undefined ? String(cell.v) : displayText);
           if(cell && cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
 
-          // Apply Excel visual style (font/fill/alignment) if available
           applyExcelStyle(td, activeSheetName, addr);
-
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
 
-      // Mount
       out.innerHTML = '';
       out.appendChild(table);
       currentHTMLTable = table;
 
-      // interactions (persistent)
       table.addEventListener('click', onCellClick);
       applyFilter();
 
-      /* NEW: render charts for this sheet */
       renderChartsForActiveSheet();
     }
 
@@ -935,7 +915,7 @@
       });
     }
 
-    /* === NEW: Chart helpers === */
+    /* ==== Chart helpers ==== */
     function destroyAllCharts(){
       chartInstances.forEach(ch => { try{ ch.destroy(); }catch{} });
       chartInstances = [];
@@ -943,7 +923,6 @@
 
     function parseSheetAndRange(a1){
       if(!a1) return null;
-      // Handle quoted sheet names with spaces or special chars
       const m = a1.match(/^(?:'([^']+)'|([^'!]+))!(\$?[A-Z]+\$?[0-9]+(?::\$?[A-Z]+\$?[0-9]+)?)$/);
       if(!m) return null;
       const sheet = (m[1] || m[2]);
@@ -952,11 +931,9 @@
     }
 
     function rangeToVector(vals2d){
-      // flatten either row or column into a 1D vector in reading order
       if(!Array.isArray(vals2d) || !vals2d.length) return [];
       if (vals2d.length === 1) return vals2d[0].slice();
       if (vals2d[0].length === 1) return vals2d.map(r => r[0]);
-      // otherwise flatten row-major
       return vals2d.flat();
     }
 
@@ -990,7 +967,6 @@
       }
       return fallbackText || '';
     }
-
     function evalSeriesName(s){
       if (s.nameF){
         const pr = parseSheetAndRange(s.nameF);
@@ -1004,6 +980,14 @@
       return '';
     }
 
+    function excelSerialToDate(serial, use1904){
+      if (serial == null || isNaN(serial)) return null;
+      let s = Number(serial);
+      if (use1904) s += 1462;
+      const epoch = Date.UTC(1899, 11, 30); // Excel's epoch (with 1900 leap-year quirk)
+      return new Date(epoch + s * 86400000);
+    }
+
     function renderChartsForActiveSheet(){
       const sheet = sheetSel.value;
       destroyAllCharts();
@@ -1015,83 +999,219 @@
         return;
       }
 
-      defs.slice(0, 8).forEach((def, idx) => { // render up to 8 to be safe
+      // Helpers to resolve data
+      function resolveLabelsWithSource(firstSeries){
+        if (firstSeries?.catRef){
+          const pr = parseSheetAndRange(firstSeries.catRef);
+          if (pr) return { labels: rangeToVector(getRangeValues(pr.sheet, pr.range)), sheet: pr.sheet };
+        }
+        if (Array.isArray(firstSeries?.catLit)) return { labels: firstSeries.catLit.slice(), sheet: sheet };
+        return { labels: [], sheet: sheet };
+      }
+      function resolveY(s){
+        if (s.yRef){
+          const pr = parseSheetAndRange(s.yRef);
+          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+        }
+        if (Array.isArray(s.yLit)) return s.yLit.map(Number);
+        return [];
+      }
+      function resolveX(s){
+        if (s.xRef){
+          const pr = parseSheetAndRange(s.xRef);
+          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range));
+        }
+        if (Array.isArray(s.xLit)) return s.xLit.slice();
+        return [];
+      }
+      function resolveZ(s){
+        if (s.zRef){
+          const pr = parseSheetAndRange(s.zRef);
+          if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+        }
+        if (Array.isArray(s.zLit)) return s.zLit.map(Number);
+        return [];
+      }
+
+      // Histogram helper (Sturges rule)
+      function buildHistogram(values){
+        const nums = values.map(Number).filter(v => isFinite(v));
+        if (!nums.length) return { labels:[], counts:[] };
+        const min = Math.min(...nums), max = Math.max(...nums);
+        const k = Math.max(1, Math.ceil(Math.log2(nums.length) + 1));
+        const width = (max - min) / k || 1;
+        const counts = new Array(k).fill(0);
+        nums.forEach(v => {
+          let idx = Math.floor((v - min) / width);
+          if (idx >= k) idx = k - 1;
+          if (idx < 0) idx = 0;
+          counts[idx]++;
+        });
+        const labels = counts.map((_,i)=>{
+          const a = min + i*width, b = a + width;
+          return `${a.toFixed(2)}–${b.toFixed(2)}`;
+        });
+        return { labels, counts };
+      }
+
+      defs.slice(0, 12).forEach((def, idx) => {
         const title = evalTitle(def.titleF, def.titleText);
         const cnv = document.createElement('canvas');
         cnv.setAttribute('aria-label', title || ('Chart '+(idx+1)));
         chartsOut.appendChild(cnv);
 
-        // Helpers to resolve data from either range refs (via HF) or literals captured from chart XML
-        function resolveLabels(firstSeries){
-          if (firstSeries.catRef){
-            const pr = parseSheetAndRange(firstSeries.catRef);
-            if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(v => String(v ?? ''));
-          }
-          if (Array.isArray(firstSeries.catLit)) return firstSeries.catLit.map(v => String(v ?? ''));
-          return [];
-        }
-        function resolveY(s){
-          if (s.yRef){
-            const pr = parseSheetAndRange(s.yRef);
-            if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
-          }
-          if (Array.isArray(s.yLit)) return s.yLit.map(Number);
-          return [];
-        }
-        function resolveXY(s){
-          let xs = [];
-          let ys = [];
-          if (s.xRef){
-            const prx = parseSheetAndRange(s.xRef);
-            if (prx) xs = rangeToVector(getRangeValues(prx.sheet, prx.range)).map(Number);
-          } else if (Array.isArray(s.xLit)) {
-            xs = s.xLit.map(Number);
-          }
-          if (s.yRef){
-            const pry = parseSheetAndRange(s.yRef);
-            if (pry) ys = rangeToVector(getRangeValues(pry.sheet, pry.range)).map(Number);
-          } else if (Array.isArray(s.yLit)) {
-            ys = s.yLit.map(Number);
-          }
-          const len = Math.min(xs.length, ys.length);
-          return Array.from({length: len}, (_,i)=>({x: xs[i], y: ys[i]}));
-        }
-
-        if (def.type === 'pie'){
+        if (def.type === 'pie' || def.type === 'doughnut'){
           const first = def.series[0] || {};
-          const labels = resolveLabels(first);
-          const data   = resolveY(first);
+          const { labels } = resolveLabelsWithSource(first);
+          const data = resolveY(first);
           const cfg = {
-            type: 'pie',
-            data: { labels, datasets: [{ label: evalSeriesName(first) || title || 'Series', data }] },
+            type: def.type,
+            data: { labels: labels.map(v=>String(v ?? '')), datasets: [{ label: evalSeriesName(first) || title || 'Series', data }] },
             options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
           };
           chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+
         } else if (def.type === 'scatter'){
-          const datasets = def.series.map((s, i) => ({
-            label: evalSeriesName(s) || ('Series ' + (i+1)),
-            data: resolveXY(s),
-            showLine:false
-          }));
+          const datasets = def.series.map((s, i) => {
+            const xs = resolveX(s).map(Number);
+            const ys = resolveY(s);
+            const len = Math.min(xs.length, ys.length);
+            const data = Array.from({length: len}, (_,k)=>({x: xs[k], y: ys[k]}));
+            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data, showLine:false };
+          });
           const cfg = {
             type: 'scatter',
             data: { datasets },
             options: { responsive:true, scales:{ x:{ type:'linear' }, y:{ type:'linear' } }, plugins:{ title:{ display: !!title, text: title } } }
           };
           chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
-        } else {
-          // line / bar
+
+        } else if (def.type === 'bubble'){
+          const datasets = def.series.map((s, i) => {
+            const xs = resolveX(s).map(Number);
+            const ys = resolveY(s);
+            const zs = resolveZ(s);
+            const n = Math.min(xs.length, ys.length, zs.length || Infinity);
+            const zMin = Math.min(...zs.filter(isFinite), 0), zMax = Math.max(...zs.filter(isFinite), 1);
+            const size = (z)=> {
+              if (!isFinite(z) || zMax===zMin) return 6;
+              return 4 + 12 * (z - zMin) / (zMax - zMin);
+            };
+            const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k], r: size(zs[k])}));
+            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data };
+          });
+          const cfg = { type: 'bubble', data: { datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+
+        } else if (def.type === 'radar'){
           const first = def.series[0] || {};
-          const labels = resolveLabels(first);
+          const { labels } = resolveLabelsWithSource(first);
           const datasets = def.series.map((s, i) => ({
             label: evalSeriesName(s) || ('Series ' + (i+1)),
             data: resolveY(s)
           }));
+          const cfg = { type: 'radar', data: { labels: labels.map(v=>String(v ?? '')), datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+
+        } else if (def.type === 'histogram'){
+          // Use first series values; if Excel encoded bins as categories, we’ll just plot them directly as bar
+          const s0 = def.series[0] || {};
+          const values = resolveY(s0).length ? resolveY(s0) : resolveX(s0).map(Number);
+          let labels = [], counts = [];
+          if (resolveX(s0).length && resolveY(s0).length && resolveX(s0).length === resolveY(s0).length) {
+            // Already binned (categories + counts)
+            labels = resolveX(s0).map(v=>String(v ?? ''));
+            counts = resolveY(s0);
+          } else {
+            const h = buildHistogram(values);
+            labels = h.labels; counts = h.counts;
+          }
+          const cfg = {
+            type: 'bar',
+            data: { labels, datasets:[{ label: evalSeriesName(s0) || title || 'Histogram', data: counts }] },
+            options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } }
+          };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+
+        } else if (def.type === 'stock'){
+          // Expect Open/High/Low/Close in series names or in O,H,L,C order
+          const s = def.series;
+          const nameMap = {};
+          s.forEach((ser, i)=>{
+            const nm = (evalSeriesName(ser) || '').toLowerCase();
+            if (/open/.test(nm)) nameMap.open = i;
+            else if (/high/.test(nm)) nameMap.high = i;
+            else if (/low/.test(nm)) nameMap.low = i;
+            else if (/close|last/.test(nm)) nameMap.close = i;
+          });
+          // Fallback to positional mapping if names missing
+          const idxOpen = nameMap.open ?? 0;
+          const idxHigh = nameMap.high ?? 1;
+          const idxLow  = nameMap.low  ?? 2;
+          const idxClose= nameMap.close?? 3;
+
+          const refSeries = s[idxOpen] || s[0] || {};
+          const { labels, sheet: labelSheet } = resolveLabelsWithSource(refSeries);
+          const use1904 = !!date1904BySheet[labelSheet];
+
+          const opens = (s[idxOpen]) ? resolveY(s[idxOpen]) : [];
+          const highs = (s[idxHigh]) ? resolveY(s[idxHigh]) : [];
+          const lows  = (s[idxLow ]) ? resolveY(s[idxLow ]) : [];
+          const closes= (s[idxClose])? resolveY(s[idxClose]) : [];
+          const n = Math.min(labels.length, opens.length, highs.length, lows.length, closes.length);
+
+          const data = Array.from({length:n}, (_,i)=>{
+            const L = labels[i];
+            let x = L;
+            if (typeof L === 'number') {
+              const d = excelSerialToDate(L, use1904);
+              if (d) x = d.getTime();
+            } else if (typeof L === 'string') {
+              const d = new Date(L);
+              if (!isNaN(d)) x = d.getTime();
+            }
+            return { x, o: +opens[i], h: +highs[i], l: +lows[i], c: +closes[i] };
+          });
 
           const cfg = {
-            type: def.type,
-            data: { labels, datasets },
-            options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } }
+            type: 'ohlc', // or 'candlestick'
+            data: { datasets: [{ label: title || 'OHLC', data }] },
+            options: {
+              responsive: true,
+              parsing: false,
+              scales: { x: { type: 'time', time: { unit: 'day' } } },
+              plugins: { title: { display: !!title, text: title } }
+            }
+          };
+          try{
+            chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+          }catch(e){
+            // If plugin is missing, degrade gracefully to bar chart of Close
+            const fallback = {
+              type: 'bar',
+              data: { labels: labels.map(v=>String(v ?? '')), datasets:[{ label: 'Close', data: closes }] },
+              options: { responsive:true, plugins:{ title:{ display:true, text: (title? title+' (Close only)' : 'Close') } } }
+            };
+            chartInstances.push(new Chart(cnv.getContext('2d'), fallback));
+          }
+
+        } else {
+          // line / area / bar
+          const first = def.series[0] || {};
+          const { labels } = resolveLabelsWithSource(first);
+          const datasets = def.series.map((s, i) => ({
+            label: evalSeriesName(s) || ('Series ' + (i+1)),
+            data: resolveY(s)
+          }));
+          const chartType = (def.type === 'area') ? 'line' : (def.type === 'bar' ? 'bar' : 'line');
+          const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
+          if (chartType === 'line' && def.type === 'area') {
+            options.fill = true;
+          }
+          const cfg = {
+            type: chartType,
+            data: { labels: labels.map(v=>String(v ?? '')), datasets },
+            options
           };
           chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
         }
@@ -1123,13 +1243,12 @@
     })();
   </script>
 
-  <!-- NEW: Back button handler that forces same-origin root and cache-busts any stale 301/HSTS -->
+  <!-- Back button handler that forces same-origin root -->
   <script>
     (function () {
       const el = document.getElementById('backToLanding');
       if (!el) return;
 
-      // Also set a safe href on load (useful for long-press / copy link on mobile)
       (function setSafeHref(){
         const isGH = /\.github\.io$/i.test(location.hostname);
         const segs = location.pathname.split('/').filter(Boolean);
@@ -1139,18 +1258,12 @@
       })();
 
       el.addEventListener('click', function (e) {
-        // Prevent any rogue default or global handlers from rewriting the URL
         e.preventDefault();
-
         const isGH = /\.github\.io$/i.test(location.hostname);
         const segs = location.pathname.split('/').filter(Boolean);
         const repo = isGH ? (segs[0] || '') : '';
         const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
-
-        // Build a fresh URL on the current origin. The query ensures it won't match an old cached redirect.
         const url = location.origin + basePath + '?noredir=' + Date.now();
-
-        // Replace so the back stack isn't polluted
         location.replace(url);
       }, { passive: false });
     })();
