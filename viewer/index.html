@@ -8,12 +8,17 @@
   <style>
     :root{
       --bg:#0b0c0f; --panel:#141821; --muted:#7f8aa3; --border:#202636; --text:#e7eaf0; --accent:#5bb98b;
+      --grid: var(--border);
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-      --sans: system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans";
+      --sans: Calibri, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", system-ui, -apple-system;
+      --cellw: 180px;       /* default column width */
+      --rowheadw: 64px;     /* row-header width */
     }
-    @media (prefers-color-scheme: light) {
-      :root{ --bg:#ffffff; --panel:#f7f8fb; --muted:#515f7a; --border:#e7eaf0; --text:#0b0c0f; --accent:#17664b; }
+    /* Excel-look theme (permanently ON) */
+    body.excel{
+      --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#d6d9df; --grid:#e3e6eb; --text:#1e1e1e; --accent:#17664b;
     }
+    @media (max-width: 1100px){ :root{ --cellw: 150px; --rowheadw: 56px; } }
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
@@ -29,63 +34,81 @@
     .spacer{flex:1}
     .btn, select, input[type="text"]{
       background:transparent; color:var(--text); border:1px solid var(--border); border-radius:10px;
-      padding:8px 10px; font-size:14px; text-decoration:none;
+      padding:8px 10px; font-size:14px;
     }
     .btn:hover{border-color:var(--accent)}
     .btn.primary{background:var(--accent); color:white; border-color:var(--accent)}
     .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
     .pill{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px}
-    main{display:grid; grid-template-columns:1fr 320px; gap:14px; padding:14px; min-height:0}
+    main{display:grid; grid-template-columns:1fr 360px; gap:14px; padding:14px; min-height:0}
     aside{
       border-left:1px solid var(--border); padding-left:14px;
       display:flex; flex-direction:column; gap:12px; min-height:0;
     }
     .panel{
-      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      background:var(--panel); border:1px solid var(--border); border-radius:12px; 
       padding:12px; min-height:0;
     }
     .panel h2{margin:0 0 8px 0; font-size:14px}
     .meta{color:var(--muted); font-size:12px}
-    #sheetWrap{background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0}
-    table{border-collapse:collapse; font-size:13px; font-family:var(--mono)}
-    th, td{border:1px solid var(--border); padding:6px 8px; white-space:nowrap; vertical-align:top}
-    thead th{position:sticky; top:0; background:rgba(0,0,0,0.15)}
-    tbody td.firstcol, thead th.firstcol{position:sticky; left:0; background:rgba(0,0,0,0.10)}
-    tbody tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+    #sheetWrap{
+      background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0
+    }
+    table{
+      border-collapse:separate; border-spacing:0; font-size:13px; font-family:var(--sans);
+      table-layout:fixed; min-width:100%; background:var(--panel);
+    }
+    th, td{
+      border:1px solid var(--grid); padding:6px 8px; vertical-align:top;
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
+      background-clip: padding-box;
+    }
+    thead th{position:sticky; top:0; background:#f4f6f8; z-index:2}
+    thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--grid)}
+    tbody th.firstcol{
+      position:sticky; left:0; background:#fafbfc; z-index:1; box-shadow:2px 0 0 0 var(--grid)
+    }
+    /* Column sizing fallback */
+    thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
+    thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
+    tbody tr:nth-child(even) td{ background:rgba(0,0,0,0.01) }
     .error{color:#e87d7d}
-    .kv{display:grid; grid-template-columns:110px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
+    .kv{display:grid; grid-template-columns:120px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
     .kv b{color:var(--muted); font-weight:600}
+    .kv span{white-space:pre-wrap; word-break:break-word}
     code{font-family:var(--mono); font-size:12px}
-    details summary{cursor:pointer; color:var(--muted)}
     .hidden{display:none}
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
-    @media (max-width: 980px) {
-      main{grid-template-columns:1fr}
-      aside{border-left:none; padding-left:0}
-    }
-    /* small tweak so canvas doesn’t overflow */
-    #chartCanvas{width:100%; max-height:260px}
+    @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
   </style>
+  <!-- Sheet parser -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Formula engine for live recalc -->
+  <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
+  <!-- Tiny unzipper to read styles.xml for real Excel colours/fonts/borders -->
+  <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
 </head>
-<body>
+<body class="excel">
   <header>
-    <a class="btn" href="../">Back to landing page</a>
+    <!-- CHANGED: add id and neutral href so JS controls navigation -->
+    <a id="backToLanding" class="btn" href="#">Back to landing page</a>
     <h1>Live Spreadsheet Viewer</h1>
     <div class="spacer"></div>
 
     <div class="toolbar">
       <label class="pill">Workbook
-        <select id="file"></select>
+        <select id="file" aria-label="Workbook"></select>
       </label>
       <label class="pill">Sheet
-        <select id="sheet"></select>
+        <select id="sheet" aria-label="Sheet"></select>
       </label>
-      <label class="pill"><input type="checkbox" id="showFormula"> Show formulas</label>
-      <label class="pill">Filter <input id="filter" type="text" placeholder="Type to filter rows"></label>
+      <label class="pill">Scenario
+        <select id="scenario" aria-label="Scenario"></select>
+      </label>
+      <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
+      <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
-      <!-- NEW: full-fidelity chart/shape viewer -->
-      <a class="btn" id="officeLink" target="_blank" rel="noopener">Open in Microsoft Viewer</a>
     </div>
   </header>
 
@@ -95,38 +118,15 @@
     <aside>
       <div class="panel" id="inspector">
         <h2>Cell inspector</h2>
-        <div class="meta">Click any cell to inspect value and formula.</div>
+        <div class="meta">Click any cell to inspect value and formulae.</div>
         <div class="kv" id="cellInfo">
           <b>Address</b><span>–</span>
           <b>Value</b><span>–</span>
-          <b>Raw</span><span>–</span>
+          <b>Raw</b><span>–</span>
           <b>Formula</b><span>–</span>
           <b>Type</b><span>–</span>
           <b>Format</b><span>–</span>
           <b>Hyperlink</b><span>–</span>
-        </div>
-      </div>
-
-      <div class="panel" id="ranges">
-        <h2>Named ranges</h2>
-        <div class="meta">Workbook-level names</div>
-        <div id="namesBody" class="meta">None detected.</div>
-      </div>
-
-      <div class="panel" id="sources">
-        <h2>Sources</h2>
-        <div class="meta">Pulled from <code>SOURCES.md</code> if present.</div>
-        <div id="sourcesBody" class="meta">Looking for SOURCES.md…</div>
-      </div>
-
-      <!-- NEW: simple chart panel driven by named ranges -->
-      <div class="panel" id="chartPanel">
-        <h2>Chart (from named ranges)</h2>
-        <div class="meta">Looks for <code>CHART_CATS</code>, <code>CHART_S1…S6</code> and optional <code>CHART_S1_NAME…S6_NAME</code> in the workbook.</div>
-        <canvas id="chartCanvas" height="220"></canvas>
-        <div class="meta" id="chartStatus">Waiting for workbook…</div>
-        <div class="toolbar">
-          <button class="btn" id="refreshChart">Refresh chart</button>
         </div>
       </div>
     </aside>
@@ -136,41 +136,54 @@
     Tip: provide a “Summary” sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
   </footer>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <!-- NEW: Chart.js for the lightweight in-page chart -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
   <script>
-    // === Configure your workbooks (case-sensitive paths) ===
+    // === Workbooks (case-sensitive paths) ===
     const files = [
-      { path: "../models/3_Statement_Model.xlsx", label: "Smith & Nephew — 3-Statement" }
-      // { path: "../models/03_DCF.xlsx", label: "Smith & Nephew — DCF" },
-      // { path: "../models/06_SOTP.xlsx", label: "Smith & Nephew — SOTP" },
-      // { path: "../models/07_rNPV.xlsx", label: "Smith & Nephew — rNPV" },
-      // { path: "../models/Valuation_Overview.xlsx", label: "Valuation Overview (charts)" }
+      { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
+      { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
+	  { path: "../models/Comps_Precs.xlsx", label: "Comparables and Precedent Valuations" },
+	  { path: "../models/Valuation_Overview.xlsx", label: "Valuation Overview" }
     ];
-    // =======================================================
 
+    // === Scenario bindings (multiple sheets/cells) ===
+    const SCENARIO_OPTS = ['Bear','Central','Bull'];
+    const SCENARIOS = [
+      { sheet: 'DCF',  targets: ['J22','J34'] },
+      { sheet: 'SOTP', targets: ['B28','H28','N28'] },
+	  { sheet: 'rNPV', targets: ['A1'] }
+    ];
+
+    // === External files needed for recalc ===
+    const LINKED_FILES = ["../models/3_Statement_Model.xlsx","../models/DCF_SN.xlsx"];
+
+    // Performance soft cap for enormous sheets
+    const MAX_R = 1500, MAX_C = 80;
+
+    // DOM
     const fileSel   = document.getElementById('file');
     const sheetSel  = document.getElementById('sheet');
+    const scenarioSel = document.getElementById('scenario');
     const out       = document.getElementById('out');
     const statusEl  = document.getElementById('status');
     const showForm  = document.getElementById('showFormula');
     const filterInp = document.getElementById('filter');
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
-    const officeA   = document.getElementById('officeLink');
 
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
+    let hf = null;  // HyperFormula instance
+    const sheetOffsets = {};      // { [sheetName]: {r0, c0} }
+    const date1904BySheet = {};   // { [sheetName]: boolean }
+    let styleCtx = null;          // Excel styles from styles.xml (for current workbook)
 
-    // populate file dropdown
+    // Populate dropdowns
     files.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.path; opt.textContent = f.label;
       fileSel.appendChild(opt);
     });
     fileSel.value = files[0].path;
+    scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join('');
 
     fileSel.addEventListener('change', () => loadWorkbook(fileSel.value));
     sheetSel.addEventListener('change', () => {
@@ -179,7 +192,6 @@
       currentWS = currentWB.Sheets[name];
       renderSheet(currentWS);
       syncLink();
-      refreshChartFromNames(); // NEW: keep chart in sync when sheet changes
     });
     showForm.addEventListener('change', () => renderSheet(currentWS));
     filterInp.addEventListener('input', () => applyFilter());
@@ -190,114 +202,465 @@
       url.searchParams.set('file', short);
       url.searchParams.set('sheet', sheetSel.value);
       url.searchParams.set('f', showForm.checked ? "1":"0");
+      url.searchParams.set('sc', scenarioSel.value);
       navigator.clipboard.writeText(url.toString()).then(() => {
-        status(`Link copied`);
-      }).catch(() => status(`Could not copy link`));
+        status('Link copied');
+      }).catch(() => status('Could not copy link'));
     });
 
     function syncLink(){
       dlLink.href = currentPath;
       dlLink.textContent = 'Download ' + (files.find(f=>f.path===currentPath)?.label || 'workbook');
-      // NEW: Office viewer deep link for full-fidelity charts/shapes
-      try{
-        const abs = new URL(currentPath, location.href).href;
-        const ov = 'https://view.officeapps.live.com/op/view.aspx?src=' + encodeURIComponent(abs) + '&wdDownloadButton=FALSE';
-        officeA.href = ov;
-      }catch(_){}
     }
-
     function status(t){ statusEl.textContent = t; }
 
+    // Utils
+    function stripBookRefs(formula) {
+      return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, '');
+    }
+    function isDateFmt(fmt){ return typeof fmt === 'string' && /[dyhs]/i.test(fmt); }
+
+    function formatUsingCell(val, cell, sheetName){
+      if (val === null || val === undefined) return '';
+      // Fallback to Excel cached text if HF returns an error object
+      if (val && typeof val === 'object' && 'type' in val) {
+        if (cell && typeof cell.w === 'string' && cell.w.trim()) return cell.w;
+        const map = { NAME:'#NAME?', REF:'#REF!', DIV_BY_ZERO:'#DIV/0!', VALUE:'#VALUE!', NUM:'#NUM!', NA:'#N/A' };
+        return map[val.type] || '#ERROR';
+      }
+      if (cell && cell.z !== undefined) {
+        try{
+          let v = val;
+          if (isDateFmt(cell.z) && date1904BySheet[sheetName]) v = Number(v) + 1462;
+          return XLSX.SSF.format(cell.z, v);
+        }catch{}
+      }
+      if (cell && typeof val === 'number' && typeof cell.w === 'string' && cell.w.trim()){
+        const w = cell.w, hasPct = /%/.test(w), hasGBP = /£/.test(w);
+        const mDec = w.match(/\.([0-9]+)/); const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
+        const useGrouping = /,/.test(w) || Math.abs(val) >= 1000;
+        const opts = { maximumFractionDigits: decimals, minimumFractionDigits: decimals, useGrouping };
+        if (hasGBP){ opts.style = 'currency'; opts.currency = 'GBP'; }
+        if (hasPct){ opts.style = 'percent'; }
+        try{ return new Intl.NumberFormat('en-GB', opts).format(val); }catch{}
+      }
+      return (typeof val === 'number') ? new Intl.NumberFormat('en-GB').format(val) : String(val);
+    }
+
+    // === Scenario helpers: write/read across all bound cells ===
+    function setScenarioInHF(value){
+      SCENARIOS.forEach(({sheet, targets}) => {
+        const id = hf.getSheetId(sheet);
+        const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
+        targets.forEach(addr => {
+          const { r, c } = XLSX.utils.decode_cell(addr);
+          hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
+        });
+      });
+    }
+    function readScenarioFromHF(){
+      for (const {sheet, targets} of SCENARIOS){
+        const id = hf.getSheetId(sheet);
+        const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
+        for (const addr of targets){
+          const { r, c } = XLSX.utils.decode_cell(addr);
+          const v = hf.getCellValue({ sheet: id, row: r - r0, col: c - c0 });
+          if (v != null) return String(v);
+        }
+      }
+      return null;
+    }
+
+    // === Parse Excel styles and per-cell style indices from the XLSX buffer ===
+    async function extractStylesFromXLSX(arrayBuffer){
+      try{
+        const bytes = new Uint8Array(arrayBuffer);
+        const zip = fflate.unzipSync(bytes);
+        const td = new TextDecoder('utf-8');
+
+        const stylesXml = zip['xl/styles.xml'] ? td.decode(zip['xl/styles.xml']) : null;
+        const wbXml     = zip['xl/workbook.xml'] ? td.decode(zip['xl/workbook.xml']) : null;
+        const relsXml   = zip['xl/_rels/workbook.xml.rels'] ? td.decode(zip['xl/_rels/workbook.xml.rels']) : null;
+
+        if(!stylesXml || !wbXml || !relsXml) return null;
+
+        const parse = (xml) => (new DOMParser()).parseFromString(xml, 'application/xml');
+
+        // Parse styles.xml
+        const sdoc = parse(stylesXml);
+        const fonts = Array.from(sdoc.getElementsByTagName('fonts')[0]?.getElementsByTagName('font') || []).map(n => {
+          const bold = !!n.getElementsByTagName('b')[0];
+          const italic = !!n.getElementsByTagName('i')[0];
+          const sz = n.getElementsByTagName('sz')[0]?.getAttribute('val');
+          const name = n.getElementsByTagName('name')[0]?.getAttribute('val');
+          const col = n.getElementsByTagName('color')[0];
+          const rgb = col?.getAttribute('rgb'); // ARGB like FF112233
+          const color = rgb ? ('#'+rgb.slice(-6)) : null;
+          return { bold, italic, sz: sz? parseFloat(sz):null, name, color };
+        });
+
+        const fills = Array.from(sdoc.getElementsByTagName('fills')[0]?.getElementsByTagName('fill') || []).map(n => {
+          const pf = n.getElementsByTagName('patternFill')[0];
+          const ptype = pf?.getAttribute('patternType');
+          const fg = pf?.getElementsByTagName('fgColor')[0];
+          const rgb = fg?.getAttribute('rgb');
+          const color = (ptype === 'solid' && rgb) ? ('#'+rgb.slice(-6)) : null;
+          return { color };
+        });
+
+        const borders = Array.from(sdoc.getElementsByTagName('borders')[0]?.getElementsByTagName('border') || []).map(n => {
+          const has = ['left','right','top','bottom'].some(s => n.getElementsByTagName(s)[0]?.getAttribute('style'));
+          return { has };
+        });
+
+        const xfs = Array.from(sdoc.getElementsByTagName('cellXfs')[0]?.getElementsByTagName('xf') || []).map(xf => {
+          const fontId = parseInt(xf.getAttribute('fontId') ?? '-1',10);
+          const fillId = parseInt(xf.getAttribute('fillId') ?? '-1',10);
+          const borderId = parseInt(xf.getAttribute('borderId') ?? '-1',10);
+          const align = xf.getElementsByTagName('alignment')[0];
+          const alignment = align ? {
+            horizontal: align.getAttribute('horizontal') || null,
+            vertical: align.getAttribute('vertical') || null,
+            wrapText: align.getAttribute('wrapText') === '1'
+          } : null;
+          return { fontId, fillId, borderId, alignment };
+        });
+
+        // Map sheet name -> sheet xml path
+        const wdoc = parse(wbXml);
+        const sheets = Array.from(wdoc.getElementsByTagName('sheet')).map(s => ({
+          name: s.getAttribute('name'),
+          rid:  s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || s.getAttribute('r:id')
+        }));
+        const rdoc = parse(relsXml);
+        const rels = {};
+        Array.from(rdoc.getElementsByTagName('Relationship')).forEach(r=>{
+          rels[r.getAttribute('Id')] = r.getAttribute('Target');
+        });
+        const sheetPathByName = {};
+        sheets.forEach(s => {
+          const tgt = rels[s.rid];
+          if (tgt) sheetPathByName[s.name] = 'xl/' + tgt.replace(/^\//,'');
+        });
+
+        // For each sheet, map cell address -> style xf id (from <c s="N">)
+        const sheetCellXf = {};
+        for (const [sheetName, pth] of Object.entries(sheetPathByName)){
+          const entry = zip[pth];
+          if (!entry) continue;
+          const sxml = td.decode(entry);
+          const doc = parse(sxml);
+          const cells = doc.getElementsByTagName('c');
+          const map = {};
+          for (let i=0;i<cells.length;i++){
+            const c = cells[i];
+            const r = c.getAttribute('r'); // e.g., "A1"
+            const s = c.getAttribute('s');
+            if (r && s) map[r] = parseInt(s,10);
+          }
+          sheetCellXf[sheetName] = map;
+        }
+
+        return { fonts, fills, borders, xfs, sheetCellXf };
+      }catch(_){
+        return null;
+      }
+    }
+
+    function applyExcelStyle(td, sheetName, addr){
+      if (!styleCtx) return;
+      const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
+      if (xfIdx == null) return;
+      const xf = styleCtx.xfs[xfIdx] || {};
+      // Fill
+      const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
+      if (fill && fill.color) td.style.backgroundColor = fill.color;
+      // Font
+      const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
+      if (font){
+        if (font.bold) td.style.fontWeight = '700';
+        if (font.italic) td.style.fontStyle = 'italic';
+        if (font.color) td.style.color = font.color;
+        if (font.sz) td.style.fontSize = font.sz + 'px';
+        if (font.name) td.style.fontFamily = font.name + ', ' + getComputedStyle(document.body).fontFamily;
+      }
+      // Alignment
+      if (xf.alignment){
+        if (xf.alignment.horizontal) td.style.textAlign = xf.alignment.horizontal;
+        if (xf.alignment.vertical)   td.style.verticalAlign = xf.alignment.vertical;
+        if (xf.alignment.wrapText){ td.style.whiteSpace = 'normal'; td.style.wordBreak = 'break-word'; }
+      }
+    }
+
+    function pxFromCol(col){
+      if (!col) return null;
+      if (col.wpx) return Math.round(col.wpx);
+      if (col.wch) return Math.round(col.wch * 7 + 5);
+      return null;
+    }
+
+    // === Load workbook ===
     async function loadWorkbook(path){
       try{
         currentPath = path;
         status('Loading workbook…');
         out.innerHTML = '';
         sheetSel.innerHTML = '';
+        styleCtx = null;
+
         const res = await fetch(path, { cache: 'no-store' });
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
-        currentWB = XLSX.read(buf, { type: 'array' });
 
-        // populate sheets
+        // Parse with SheetJS for data + formulas
+        currentWB = XLSX.read(buf, { type: 'array' });
+        if (currentWB && currentWB.SSF) XLSX.SSF.load(currentWB.SSF);
+
+        // Extract real Excel styles/xf indices from the raw zip (current workbook only)
+        styleCtx = await extractStylesFromXLSX(buf);
+
+        // Populate sheets
         currentWB.SheetNames.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s; opt.textContent = s;
           sheetSel.appendChild(opt);
         });
-        // pick Summary if present, else first
         const initial = currentWB.SheetNames.includes('Summary') ? 'Summary' : currentWB.SheetNames[0];
         sheetSel.value = initial;
         currentWS = currentWB.Sheets[initial];
 
-        // render
+        // Build HyperFormula model (current + linked files)
+        await buildHF();
+
+        // Scenario init
+        initScenarioFromHF();
+
+        // Render
         renderSheet(currentWS);
         status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
-
-        // show workbook names
-        renderNames();
-
-        // attempt to load SOURCES.md from repo root
-        loadSources();
-
-        // update download + office links
         syncLink();
-
-        // NEW: try to render a chart from named ranges
-        refreshChartFromNames();
       }catch(e){
-        out.innerHTML = `<div class="error">${e.message}</div>`;
+        out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
         status('Error loading workbook');
       }
     }
 
+    async function buildHF(){
+      if (!window.HyperFormula) { hf = null; return; }
+      if (hf && hf.destroy) hf.destroy();
+
+      const paths = [currentPath, ...LINKED_FILES.filter(p => p !== currentPath)];
+      const workbooks = [];
+      for (const p of paths) {
+        const res = await fetch(p, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${p}`);
+        const buf = await res.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
+
+        // collect Names per workbook
+        const nameMap = (function collectNameMap(wb){
+          const names = (wb.Workbook && wb.Workbook.Names) || [];
+          const map = {};
+          names.forEach(n => {
+            if (n && n.Name && n.Ref) map[n.Name] = n.Ref; // e.g. "Inputs!$B$6"
+          });
+          return map;
+        })(wb);
+
+        workbooks.push({ path: p, wb, nameMap });
+      }
+
+      const sheetsData = {};
+      for (const { wb, nameMap } of workbooks) {
+        const date1904 = !!(wb.Workbook && wb.Workbook.WBProps && wb.Workbook.WBProps.date1904);
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const ref = ws['!ref'] || 'A1:A1';
+          const r = XLSX.utils.decode_range(ref);
+          const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
+          const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
+
+          // helper: expand workbook Names in a formula
+          const expandNames = (formula) => {
+            if (!nameMap) return formula;
+            let f = formula;
+            for (const [nm, adr] of Object.entries(nameMap)) {
+              const re = new RegExp(`(?<![A-Za-z0-9_])${nm}(?![A-Za-z0-9_])`, 'g');
+              f = f.replace(re, adr);
+            }
+            return f;
+          };
+
+          for (let R=r.s.r; R<=r.e.r; ++R){
+            for (let C=r.s.c; C<=r.e.c; ++C){
+              const addr = XLSX.utils.encode_cell({r:R,c:C});
+              const cell = ws[addr];
+              if (!cell) continue;
+              if (cell.f) {
+                let f = stripBookRefs(cell.f);
+                f = expandNames(f);                 // <-- expand workbook Names
+                aoa[R - r.s.r][C - r.s.c] = "=" + f;
+              } else {
+                aoa[R - r.s.r][C - r.s.c] = (cell.v ?? null);
+              }
+            }
+          }
+          const key = name;
+          sheetsData[key] = aoa;
+          sheetOffsets[key] = { r0: r.s.r, c0: r.s.c };
+          date1904BySheet[key] = date1904;
+        }
+      }
+
+      hf = HyperFormula.HyperFormula.buildFromSheets(sheetsData, { licenseKey: 'gpl-v3' });
+
+      scenarioSel.onchange = () => {
+        try {
+          setScenarioInHF(scenarioSel.value);
+		  if (hf && hf.recompute) hf.recompute();
+          renderSheet(currentWS);
+          status('Scenario updated');
+        } catch(e) {
+          status('Scenario update failed: ' + e.message);
+        }
+      };
+    }
+
+    function initScenarioFromHF(){
+      try {
+        if (!hf) return;
+        const curVal = readScenarioFromHF();
+        if (curVal && SCENARIO_OPTS.includes(curVal)) scenarioSel.value = curVal;
+        const params = new URLSearchParams(location.search);
+        const qSc = params.get('sc');
+        if (qSc && SCENARIO_OPTS.includes(qSc)) {
+          scenarioSel.value = qSc;
+          setScenarioInHF(qSc);
+        }
+      } catch(_) {}
+    }
+
     function renderSheet(ws){
       if(!ws) return;
+      const activeSheetName = sheetSel.value;
+      const activeSheetId = hf ? hf.getSheetId(activeSheetName) : null;
+
+      // Range + merges + column widths + row heights
       const ref = ws['!ref'] || 'A1:A1';
       const range = XLSX.utils.decode_range(ref);
+      const rowOffset = range.s.r, colOffset = range.s.c;
+      range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
+      range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
+
+      // Merges
+      const merges = ws['!merges'] || [];
+      const mergeTopLeft = new Map();
+      const covered = new Set();
+      merges.forEach(m=>{
+        const top = XLSX.utils.encode_cell(m.s);
+        const rowspan = m.e.r - m.s.r + 1, colspan = m.e.c - m.s.c + 1;
+        mergeTopLeft.set(top, { rowspan, colspan });
+        for(let r=m.s.r;r<=m.e.r;r++){
+          for(let c=m.s.c;c<=m.e.c;c++){
+            const addr = XLSX.utils.encode_cell({r,c});
+            if (addr!==top) covered.add(addr);
+          }
+        }
+      });
+
+      // Column widths
+      const colMeta = ws['!cols'] || [];
+      const colWidthPx = [];
+      for(let C=range.s.c; C<=range.e.c; ++C){
+        const width = pxFromCol(colMeta[C]);
+        colWidthPx[C] = width; // may be null
+      }
+
       const table = document.createElement('table');
+
+      // Head
       const thead = document.createElement('thead');
       const trh = document.createElement('tr');
-      // corner
       const thCorner = document.createElement('th'); thCorner.className='firstcol'; trh.appendChild(thCorner);
       for(let C=range.s.c; C<=range.e.c; ++C){
         const th = document.createElement('th');
         th.textContent = XLSX.utils.encode_col(C);
+        th.setAttribute('scope','col');
+        const wpx = colWidthPx[C];
+        if (wpx){ th.style.width = wpx+'px'; th.style.maxWidth = wpx+'px'; }
         trh.appendChild(th);
       }
       thead.appendChild(trh);
       table.appendChild(thead);
 
+      // Body
       const tbody = document.createElement('tbody');
+      const rowMeta = ws['!rows'] || [];
+
       for(let R=range.s.r; R<=range.e.r; ++R){
         const tr = document.createElement('tr');
-        const rowHead = document.createElement('th'); rowHead.className='firstcol'; rowHead.textContent = (R+1); tr.appendChild(rowHead);
+        const rmeta = rowMeta[R];
+        if (rmeta && (rmeta.hpx || rmeta.hpt)){
+          const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt*96/72);
+          tr.style.height = h + 'px';
+        }
+
+        const rowHead = document.createElement('th');
+        rowHead.className='firstcol';
+        rowHead.textContent = (R+1);
+        rowHead.setAttribute('scope','row');
+        tr.appendChild(rowHead);
+
         for(let C=range.s.c; C<=range.e.c; ++C){
           const addr = XLSX.utils.encode_cell({r:R,c:C});
+          if (covered.has(addr)) continue;
+
           const td = document.createElement('td');
-          td.dataset.address = addr;
           const cell = ws[addr];
-          if(cell){
-            const txt = (showForm.checked && cell.f) ? ("="+cell.f) : XLSX.utils.format_cell(cell);
-            td.textContent = txt;
-            if(cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
-          }else{
-            td.textContent = '';
+          td.dataset.address = addr;
+
+          // Merge span if top-left
+          const m = mergeTopLeft.get(addr);
+          if (m){ if (m.rowspan>1) td.rowSpan = m.rowspan; if (m.colspan>1) td.colSpan = m.colspan; }
+
+          // Width
+          const wpx = colWidthPx[C];
+          if (wpx){ td.style.width = wpx+'px'; td.style.maxWidth = wpx+'px'; }
+
+          // Display text
+          let displayText = '';
+          if (showForm.checked && cell && cell.f) {
+            displayText = "=" + (cell.f || '');
+          } else if (hf && activeSheetId != null) {
+            const hfRow = R - rowOffset, hfCol = C - colOffset;
+            const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
+            displayText = formatUsingCell(val, cell, activeSheetName);
+          } else {
+            displayText = cell ? XLSX.utils.format_cell(cell) : '';
           }
+
+          td.textContent = displayText;
+          td.title = (cell && cell.f) ? ("=" + cell.f)
+                   : (cell && cell.v !== undefined ? String(cell.v) : displayText);
+          if(cell && cell.t === 'n' && !cell.f) td.style.textAlign = 'right';
+
+          // Apply Excel visual style (font/fill/alignment) if available
+          applyExcelStyle(td, activeSheetName, addr);
+
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
 
-      const wrap = document.getElementById('out');
-      wrap.innerHTML = '';
-      wrap.appendChild(table);
+      // Mount
+      out.innerHTML = '';
+      out.appendChild(table);
       currentHTMLTable = table;
 
-      // click-to-inspect (bugfix: attach once per render)
+      // interactions (persistent)
       table.addEventListener('click', onCellClick);
-      // apply any active filter
       applyFilter();
     }
 
@@ -336,140 +699,16 @@
       });
     }
 
-    function renderNames(){
-      const dst = document.getElementById('namesBody');
-      const names = (currentWB.Workbook && currentWB.Workbook.Names) || [];
-      if(!names.length){ dst.textContent = 'None detected.'; return; }
-      const ul = document.createElement('ul');
-      names.forEach(n=>{
-        const li = document.createElement('li');
-        li.innerHTML = `<code>${n.Name}</code> → <code>${n.Ref || n.RefersTo || ''}</code>`;
-        ul.appendChild(li);
-      });
-      dst.innerHTML = ''; dst.appendChild(ul);
-    }
-
-    async function loadSources(){
-      const cand = ["../SOURCES.md", "../../SOURCES.md"];
-      for(const url of cand){
-        try{
-          const r = await fetch(url, { cache:'no-store' });
-          if(r.ok){
-            const md = await r.text();
-            document.getElementById('sourcesBody').innerHTML = marked.parse(md);
-            return;
-          }
-        }catch(_){}
-      }
-      document.getElementById('sourcesBody').textContent = 'SOURCES.md not found.';
-    }
-
-    // ====== NEW: Simple chart from named ranges (Chart.js) ======
-    const chartStatus = document.getElementById('chartStatus');
-    const chartCanvas = document.getElementById('chartCanvas');
-    const refreshBtn  = document.getElementById('refreshChart');
-    let chartObj = null;
-
-    refreshBtn.addEventListener('click', refreshChartFromNames);
-
-    function findName(name){
-      const names = (currentWB && currentWB.Workbook && currentWB.Workbook.Names) || [];
-      return names.find(n => (n.Name||'').toUpperCase() === name.toUpperCase());
-    }
-    function parseSheetAndRange(ref){
-      // Accept forms like Sheet!$A$1:$B$10 or 'My Sheet'!$C$2:$C$8 or single-cell
-      const m = ref && ref.match(/^(?:'([^']+)'|([^!]+))!([$A-Z]+[$0-9]+)(?::([$A-Z]+[$0-9]+))?$/);
-      if(!m) return null;
-      const sheet = (m[1]||m[2]||'').replace(/''/g,"'");
-      const s = XLSX.utils.decode_cell(m[3]);
-      const e = XLSX.utils.decode_cell(m[4]||m[3]);
-      return { sheet, s, e };
-    }
-    function valuesFromRange(ref){
-      const pr = parseSheetAndRange(ref);
-      if(!pr) return [];
-      const ws = currentWB.Sheets[pr.sheet];
-      if(!ws) return [];
-      const out = [];
-      for(let R=pr.s.r; R<=pr.e.r; ++R){
-        const row = [];
-        for(let C=pr.s.c; C<=pr.e.c; ++C){
-          const addr = XLSX.utils.encode_cell({r:R,c:C});
-          const cell = ws[addr];
-          // Prefer numeric raw value if present; else formatted text
-          let v = (cell && cell.v!==undefined) ? cell.v : (cell ? XLSX.utils.format_cell(cell) : '');
-          row.push(v);
-        }
-        out.push(row.length===1 ? row[0] : row);
-      }
-      // Flatten 2D single-column/row to 1D
-      if(out.length && !Array.isArray(out[0])) return out;
-      if(out.length && Array.isArray(out[0]) && (out[0].length===1 || out.length===1)){
-        return out.map(r => Array.isArray(r) ? r[0] : r);
-      }
-      return out;
-    }
-
-    function refreshChartFromNames(){
-      if(!currentWB){ chartStatus.textContent = 'No workbook loaded.'; return; }
-
-      const catsN = findName('CHART_CATS');
-      const s1N   = findName('CHART_S1');
-      // optional more series up to S6
-      const series = [];
-      const names  = [];
-      for(let i=1;i<=6;i++){
-        const r = findName('CHART_S'+i);
-        if(r){
-          series.push(r);
-          const nm = findName('CHART_S'+i+'_NAME');
-          names.push(nm ? String(valuesFromRange(nm.Ref||nm.RefersTo||'')[0]||('Series '+i)) : ('Series '+i));
-        }
-      }
-
-      if(!catsN || !s1N){
-        chartStatus.textContent = 'No chart ranges found. Define CHART_CATS and CHART_S1…S6 (optional) in the workbook.';
-        if(chartObj){ chartObj.destroy(); chartObj = null; }
-        return;
-      }
-
-      const labels = valuesFromRange(catsN.Ref || catsN.RefersTo || '');
-      const datasets = [];
-      series.forEach((sn, idx)=>{
-        const arr = valuesFromRange(sn.Ref || sn.RefersTo || '');
-        // coerce to numbers when possible
-        const data = (Array.isArray(arr) ? arr : []).map(v => (typeof v==='number' ? v : parseFloat(String(v).replace(/[, ]/g,'')))).map(v => (isFinite(v)? v : null));
-        datasets.push({ label: names[idx]||('Series '+(idx+1)), data, borderWidth: 1 });
-      });
-
-      try{
-        if(chartObj) chartObj.destroy();
-        chartObj = new Chart(chartCanvas.getContext('2d'), {
-          type: 'bar',
-          data: { labels, datasets },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: 'top' },
-              tooltip: { mode: 'index', intersect: false }
-            },
-            scales: { x: { ticks: { autoSkip: true, maxRotation: 0 } }, y: { beginAtZero: true } }
-          }
-        });
-        chartStatus.textContent = `Rendered ${datasets.length} dataset(s) from named ranges.`;
-      }catch(e){
-        chartStatus.textContent = 'Chart error: ' + e.message;
-      }
-    }
-
     // Deep-link support
     (function initFromQuery(){
       const params = new URLSearchParams(location.search);
       const qFile  = params.get('file');
       const qSheet = params.get('sheet');
       const qF     = params.get('f');
+      const qSc    = params.get('sc');
       if(qF === '1') showForm.checked = true;
+
+      if (qSc && SCENARIO_OPTS.includes(qSc)) scenarioSel.value = qSc;
 
       if(qFile){
         const match = files.find(f => f.path.endsWith('/'+qFile) || f.label === qFile);
@@ -480,9 +719,41 @@
           sheetSel.value = qSheet;
           currentWS = currentWB.Sheets[qSheet];
           renderSheet(currentWS);
-          refreshChartFromNames();
         }
       });
+    })();
+  </script>
+
+  <!-- NEW: Back button handler that forces same-origin root and cache-busts any stale 301/HSTS -->
+  <script>
+    (function () {
+      const el = document.getElementById('backToLanding');
+      if (!el) return;
+
+      // Also set a safe href on load (useful for long-press / copy link on mobile)
+      (function setSafeHref(){
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+        el.setAttribute('href', basePath + '?noredir=' + Date.now());
+      })();
+
+      el.addEventListener('click', function (e) {
+        // Prevent any rogue default or global handlers from rewriting the URL
+        e.preventDefault();
+
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+
+        // Build a fresh URL on the current origin. The query ensures it won't match an old cached redirect.
+        const url = location.origin + basePath + '?noredir=' + Date.now();
+
+        // Replace so the back stack isn't polluted
+        location.replace(url);
+      }, { passive: false });
     })();
   </script>
 </body>
