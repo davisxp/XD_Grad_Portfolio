@@ -1,100 +1,135 @@
-# Xavier Davis — Life-Sciences Finance Portfolio
+# Xavier Davis — Finance Portfolio
 
-A clean public landing page for my valuation, modelling, and deal-structuring work in healthcare and life-sciences. Includes a scenario-driven in-browser viewer and direct file downloads.
+> A professional showcase of financial modeling, valuation, and deal-structuring capabilities in healthcare and life sciences.
+
+This portfolio demonstrates expertise in building comprehensive financial models, conducting rigorous valuation analysis, and structuring complex transactions. All models are interactive and available for review through the live viewer or direct download.
+
+---
+
+## Quick Access
 
 <p align="left">
   <a href="https://davisxp.github.io/XD_Grad_Portfolio/viewer/"><img alt="Open Live Viewer" src="https://img.shields.io/badge/Open-Live%20Model%20Viewer-1f883d?style=for-the-badge"></a>
-  <a href="https://github.com/davisxp/XD_Grad_Portfolio"><img alt="View Repo" src="https://img.shields.io/badge/GitHub-Repo-0969da?style=for-the-badge"></a>
-  <img alt="Updated" src="https://img.shields.io/badge/Updated-13%20Nov%202025-555?style=for-the-badge">
+  <a href="https://github.com/davisxp/XD_Grad_Portfolio"><img alt="View Repository" src="https://img.shields.io/badge/GitHub-Repository-0969da?style=for-the-badge"></a>
 </p>
 
 ---
 
-## Quick start
+## Portfolio Overview
 
-**Option A — View online (recommended)**  
-1) Click **Open Live Viewer** above.  
-2) Choose a **Workbook** from `/models/`, then a **Sheet** (start with “Summary” or “Valuation”).  
-3) Use the **Scenario** dropdown (Bear/Central/Bull). Toggle **Show formulae** as needed.  
-4) Share a view with **Copy link**.
+This collection includes integrated financial models covering the full spectrum of corporate finance and investment analysis:
 
-**Important:** The online viewer is **read-only** for inputs. You can switch **scenarios only**.  
-All other changes to figures, drivers, or assumptions must be done by **downloading the Excel file** and editing in Excel.
-
-**Option B — Download models**  
-Use the **Contents** links below to download each file directly.
+- **Integrated Financial Modeling** — Three-statement models with dynamic scenario analysis
+- **Valuation Methodologies** — DCF (multiples and perpetuity), SOTP, rNPV, and comparable company/precedent transaction analysis
+- **Deal Structuring** — M&A accretion/dilution, LBO modeling, and capital markets transactions
+- **Investment Analysis** — Long and short investment proposals with comprehensive thesis development
 
 ---
 
-## Contents (direct downloads)
+## Using the Portfolio
 
-- **[Three Statements](models/3_Statement_Model.xlsx?raw=1)**
-- **[DCF (multiples and perpetuity), SOTP Valuation, rNPV Valuation](models/DCF_SN.xlsx?raw=1)**
-- **[Comparables and Precedents Valuation](models/Comps_Precs.xlsx?raw=1)**
-- **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)**
-- **[Merger Accretion Dilution](models/Merger_Accretion_Dilution.xlsx?raw=1)**
-- **[LBO](models/LBO.xlsx?raw=1)**
-- **[Stock Issuance](models/Stock_Issuance.xlsx?raw=1)**
-- **[Debt Issuance](models/Debt_Issuance.xlsx?raw=1)**
-- **[Long Investment Proposal](outputs/Long_Investment_Proposal.pdf?raw=1)**
-- **[Short Investment Proposal](outputs/Short_Investment_Proposal.pdf?raw=1)**
+### Interactive Viewer (Recommended)
 
-*Links trigger file downloads. Valuation modules are dependent on Three Statements and DCF workbook for drivers and checks.*
+The live viewer provides a read-only, browser-based experience for exploring models:
 
----
+1. **Access the Viewer** — Click "Open Live Viewer" above
+2. **Select a Workbook** — Choose from available financial models
+3. **Navigate Sheets** — Start with "Summary" or "Valuation" sheets for overviews
+4. **Explore Scenarios** — Toggle between Bear, Central, and Bull case scenarios
+5. **Inspect Details** — Use the formula inspector to examine underlying calculations
+6. **Share Views** — Generate shareable links for specific model views
 
-## Merger Accretion Dilution
+**Note:** The online viewer is read-only for inputs. Scenario switching is available, but all other modifications require downloading the Excel files.
 
-**What it is:** Sources & uses, synergy timing, PPA, financing mix, and EPS accretion/dilution tracking.
+### Direct Downloads
 
-## LBO
-
-**What it is:** Sponsor-style LBO with debt tranches, fees, cash sweep, covenants, and exit MoIC/IRR.
-
-## Stock Issuance
-
-**What it is:** ECM module for follow-on issuance; proceeds, discount, fees, and dilution impact.
-
-## Debt Issuance
-
-**What it is:** DCM sizing with instrument mix, spreads, amortisation, and rating headroom checks.
-
-## Long Investment Proposal
-
-**What it is:** Long thesis one-pager with catalysts, valuation cross-checks, and risk mitigants.
-
-## Short Investment Proposal
-
-**What it is:** Short thesis one-pager with structural bear case and downside catalysts.
+All models are available for direct download below. Files can be opened in Excel for full editing capabilities and deeper analysis.
 
 ---
 
-## Current state
+## Available Models
 
-Status of each module (✔ complete, ⏳ in progress, □ to do):
+### Core Financial Models
 
-- ✔ **Three Statements** — complete  
-- ✔ **DCF (multiples and perpetuity)** — complete  
-- ✔ **SOTP** — complete 
-- ✔ **rNPV** — complete
-- ✔ **Comparables Valuation** — complete  
-- ✔ **Precedents Valuation** — to do 
-- ⏳ **Valuation Thesis and Overview** - in progress
-- □ **Merger Accretion Dilution (Medtronic as the acquiring firm)** — to do  
-- □ **LBO** — to do  
-- □ **Stock Issuance** — to do  
-- □ **Debt Issuance** — to do  
-- □ **Long Investment Proposal** — to do  
-- □ **Short Investment Proposal** — to do
+| Model | Description | Status |
+|-------|-------------|--------|
+| **[Three-Statement Model](models/3_Statement_Model.xlsx?raw=1)** | Integrated income statement, balance sheet, and cash flow statement with dynamic drivers and scenario analysis | ✔ Complete |
+| **[DCF Valuations](models/DCF_SN.xlsx?raw=1)** | Discounted cash flow analysis using both exit multiple and perpetuity growth methods, including SOTP and rNPV valuations | ✔ Complete |
+| **[Comparables & Precedents](models/Comps_Precs.xlsx?raw=1)** | Comparable company analysis and precedent transaction analysis for relative valuation | ✔ Complete |
+| **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)** | Consolidated valuation summary with cross-methodology reconciliation | ⏳ In Progress |
+
+### Deal Structuring Models
+
+| Model | Description | Status |
+|-------|-------------|--------|
+| **[Merger Accretion/Dilution](models/Merger_Accretion_Dilution.xlsx?raw=1)** | Sources & uses, synergy timing, purchase price allocation, financing mix, and EPS accretion/dilution analysis | □ Planned |
+| **[LBO Model](models/LBO.xlsx?raw=1)** | Sponsor-style leveraged buyout with debt tranches, fees, cash sweep mechanics, covenant analysis, and exit MoIC/IRR calculations | □ Planned |
+| **[Stock Issuance](models/Stock_Issuance.xlsx?raw=1)** | Equity capital markets module for follow-on offerings: proceeds calculation, discount analysis, fee structure, and dilution impact | □ Planned |
+| **[Debt Issuance](models/Debt_Issuance.xlsx?raw=1)** | Debt capital markets sizing with instrument mix, spread analysis, amortization schedules, and credit rating headroom checks | □ Planned |
+
+### Investment Analysis
+
+| Document | Description | Status |
+|----------|-------------|--------|
+| **[Long Investment Proposal](outputs/Long_Investment_Proposal.pdf?raw=1)** | Comprehensive long thesis with investment catalysts, valuation cross-checks, and risk mitigation strategies | □ Planned |
+| **[Short Investment Proposal](outputs/Short_Investment_Proposal.pdf?raw=1)** | Short thesis with structural bear case analysis and downside catalyst identification | □ Planned |
 
 ---
 
-### Other
+## Technical Details
 
-For educational/experience demonstration purposes only; not investment advice.
+### Model Dependencies
 
-**Maintainer:** Xavier Davis  
-**Updated:** 13 November 2025  
-**Repository:** https://github.com/davisxp/XD_Grad_Portfolio  
-**Live viewer:** https://davisxp.github.io/XD_Grad_Portfolio/  
-**See my other work and experience:** <iframe src="https://app.crowdworks.it/embed/companies/medforth-derivatives" title="Embedded company profile widget" width="504" height="320" style="max-width: 100%; display: block;" frameborder="0"></iframe>
+- **Valuation modules** depend on the Three-Statement Model and DCF workbook for drivers and cross-checks
+- Models are built with Excel best practices: clear structure, formula transparency, and scenario flexibility
+- All models support Bear, Central, and Bull case scenario analysis
+
+### Viewer Features
+
+- **Real-time formula evaluation** using HyperFormula engine
+- **Cell inspector** for detailed formula and value analysis
+- **Excel-style formatting** preservation
+- **Deep linking** for sharing specific views
+- **Responsive design** for desktop and mobile viewing
+
+---
+
+## Portfolio Status
+
+### Completed Modules
+- ✔ Three-Statement Model
+- ✔ DCF Valuations (multiples and perpetuity)
+- ✔ Sum-of-the-Parts (SOTP) Valuation
+- ✔ Risk-Adjusted NPV (rNPV) Valuation
+- ✔ Comparables Valuation
+
+### In Progress
+- ⏳ Valuation Thesis and Overview
+
+### Planned
+- □ Precedents Valuation
+- □ Merger Accretion/Dilution (Medtronic as acquiring firm)
+- □ LBO Model
+- □ Stock Issuance Model
+- □ Debt Issuance Model
+- □ Long Investment Proposal
+- □ Short Investment Proposal
+
+---
+
+## 📧 Contact & Links
+
+**Portfolio Maintainer:** Xavier Davis  
+**Last Updated:** 13 November 2025  
+**Live Portfolio:** [https://davisxp.github.io/XD_Grad_Portfolio/](https://davisxp.github.io/XD_Grad_Portfolio/)  
+**Repository:** [https://github.com/davisxp/XD_Grad_Portfolio](https://github.com/davisxp/XD_Grad_Portfolio)
+
+---
+
+## Disclaimer
+
+This portfolio is presented for educational and professional demonstration purposes only. All models, analyses, and investment proposals are illustrative examples of financial modeling and valuation techniques. This content does not constitute investment advice, financial recommendations, or solicitation for any securities transaction.
+
+---
+
+*Built with precision. Designed for clarity. Presented for review.*

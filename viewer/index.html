@@ -6,81 +6,225 @@
   <title>Model Viewer</title>
   <meta name="description" content="Live preview of portfolio spreadsheets with formula inspector" />
   <style>
-    :root{
-      --bg:#0b0c0f; --panel:#141821; --muted:#7f8aa3; --border:#202636; --text:#e7eaf0; --accent:#5bb98b;
+    :root {
+      --bg: #0b0c0f;
+      --panel: #141821;
+      --muted: #7f8aa3;
+      --border: #202636;
+      --text: #e7eaf0;
+      --accent: #5bb98b;
       --grid: var(--border);
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       --sans: Calibri, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", system-ui, -apple-system;
-      --cellw: 180px;       /* default column width */
-      --rowheadw: 64px;     /* row-header width */
+      --cellw: 180px;
+      --rowheadw: 64px;
     }
-    body.excel{
-      --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#d6d9df; --grid:#e3e6eb; --text:#1e1e1e; --accent:#17664b;
+    body.excel {
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --muted: #4a4a4a;
+      --border: #d6d9df;
+      --grid: #e3e6eb;
+      --text: #1e1e1e;
+      --accent: #17664b;
     }
-    @media (max-width: 1100px){ :root{ --cellw: 150px; --rowheadw: 56px; } }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{
-      margin:0; font-family:var(--sans); background:var(--bg); color:var(--text);
-      display:grid; grid-template-rows:auto 1fr;
+    @media (max-width: 1100px) {
+      :root {
+        --cellw: 150px;
+        --rowheadw: 56px;
+      }
     }
-    header{
-      display:flex; gap:12px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--border);
-      background:linear-gradient(180deg, var(--panel), transparent 100%);
-      position:sticky; top:0; z-index:10;
+    * {
+      box-sizing: border-box;
     }
-    h1{margin:0; font-size:16px; font-weight:600}
-    .spacer{flex:1}
-    .btn, select, input[type="text"]{
-      background:transparent; color:var(--text); border:1px solid var(--border); border-radius:10px;
-      padding:8px 10px; font-size:14px;
+    html, body {
+      height: 100%;
     }
-    .btn:hover{border-color:var(--accent)}
-    .btn.primary{background:var(--accent); color:white; border-color:var(--accent)}
-    .toolbar{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    .pill{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid var(--border); border-radius:999px}
-    main{display:grid; grid-template-columns:1fr 360px; gap:14px; padding:14px; min-height:0}
-    aside{
-      border-left:1px solid var(--border); padding-left:14px;
-      display:flex; flex-direction:column; gap:12px; min-height:0;
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      display: grid;
+      grid-template-rows: auto 1fr;
     }
-    .panel{
-      background:var(--panel); border:1px solid var(--border); border-radius:12px; 
-      padding:12px; min-height:0;
+    header {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, var(--panel), transparent 100%);
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
-    .panel h2{margin:0 0 8px 0; font-size:14px}
-    .meta{color:var(--muted); font-size:12px}
-    #sheetWrap{
-      background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:auto; min-height:0
+    h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
     }
-    table{
-      border-collapse:separate; border-spacing:0; font-size:13px; font-family:var(--sans);
-      table-layout:fixed; min-width:100%; background:var(--panel);
+    .spacer {
+      flex: 1;
     }
-    th, td{
-      border:1px solid var(--grid); padding:6px 8px; vertical-align:top;
-      overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
+    .btn, select, input[type="text"] {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    .btn:hover {
+      border-color: var(--accent);
+    }
+    .btn.primary {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+    }
+    main {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 14px;
+      padding: 14px;
+      min-height: 0;
+    }
+    aside {
+      border-left: 1px solid var(--border);
+      padding-left: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 0;
+    }
+    .panel h2 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    #sheetWrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: auto;
+      min-height: 0;
+    }
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+      font-family: var(--sans);
+      table-layout: fixed;
+      min-width: 100%;
+      background: var(--panel);
+    }
+    th, td {
+      border: 1px solid var(--grid);
+      padding: 6px 8px;
+      vertical-align: top;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
       background-clip: padding-box;
     }
-    thead th{position:sticky; top:0; background:#f4f6f8; z-index:2}
-    thead th.firstcol{left:0; z-index:3; box-shadow:2px 0 0 0 var(--grid)}
-    tbody th.firstcol{
-      position:sticky; left:0; background:#fafbfc; z-index:1; box-shadow:2px 0 0 0 var(--grid)
+    thead th {
+      position: sticky;
+      top: 0;
+      background: #f4f6f8;
+      z-index: 2;
     }
-    thead th:not(.firstcol), tbody td:not(.firstcol){ width:var(--cellw); max-width:var(--cellw); }
-    thead th.firstcol, tbody th.firstcol{ width:var(--rowheadw); min-width:var(--rowheadw); max-width:var(--rowheadw); }
-    tbody tr:nth-child(even) td{ background:rgba(0,0,0,0.01) }
-    .error{color:#e87d7d}
-    .kv{display:grid; grid-template-columns:120px 1fr; gap:6px 10px; font-family:var(--mono); font-size:12px}
-    .kv b{color:var(--muted); font-weight:600}
-    .kv span{white-space:pre-wrap; word-break:break-word}
-    code{font-family:var(--mono); font-size:12px}
-    .hidden{display:none}
-    footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
-    @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
+    thead th.firstcol {
+      left: 0;
+      z-index: 3;
+      box-shadow: 2px 0 0 0 var(--grid);
+    }
+    tbody th.firstcol {
+      position: sticky;
+      left: 0;
+      background: #fafbfc;
+      z-index: 1;
+      box-shadow: 2px 0 0 0 var(--grid);
+    }
+    thead th:not(.firstcol), tbody td:not(.firstcol) {
+      width: var(--cellw);
+      max-width: var(--cellw);
+    }
+    thead th.firstcol, tbody th.firstcol {
+      width: var(--rowheadw);
+      min-width: var(--rowheadw);
+      max-width: var(--rowheadw);
+    }
+    tbody tr:nth-child(even) td {
+      background: rgba(0, 0, 0, 0.01);
+    }
+    .error {
+      color: #e87d7d;
+    }
+    .kv {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 6px 10px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .kv b {
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .kv span {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    code {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .hidden {
+      display: none;
+    }
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 12px 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 980px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+      aside {
+        border-left: none;
+        padding-left: 0;
+      }
+    }
   </style>
 
-  <!-- Third-party libs -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
@@ -101,8 +245,12 @@
       <label class="pill">Scenario
         <select id="scenario" aria-label="Scenario"></select>
       </label>
-      <label class="pill"><input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae</label>
-      <label class="pill">Filter <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows"></label>
+      <label class="pill">
+        <input type="checkbox" id="showFormula" aria-label="Show formulae"> Show formulae
+      </label>
+      <label class="pill">Filter
+        <input id="filter" type="text" placeholder="Filter rows" aria-label="Filter rows">
+      </label>
       <button class="btn" id="copyLink">Copy link</button>
       <a class="btn primary" id="downloadLink" download>Download</a>
     </div>
@@ -132,35 +280,38 @@
   </main>
 
   <footer>
-    Tip: provide a “Summary” sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
+    Tip: provide a "Summary" sheet in each workbook for a clean first render. Keep preview files under ~100 MB and outside Git LFS.
   </footer>
 
-  <!-- deps: heavy lifting (fetch/unzip/SheetJS/HF/style + rendering) -->
   <script>
-    // Expose helpers as a single global `deps` used by viewer.js
-    (function(){
+    (function() {
       const td = new TextDecoder("utf-8");
 
-      function stripBookRefs(formula){ return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, ""); }
-      function isDateFmt(fmt){ return typeof fmt === "string" && /[dyhs]/i.test(fmt); }
+      function stripBookRefs(formula) {
+        return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, "");
+      }
 
-      async function loadWorkbook(path){
+      function isDateFmt(fmt) {
+        return typeof fmt === "string" && /[dyhs]/i.test(fmt);
+      }
+
+      async function loadWorkbook(path) {
         const res = await fetch(path, { cache: "no-store" });
-        if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
+        if (!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
         const buf = await res.arrayBuffer();
         const wb = XLSX.read(buf, { type: "array" });
         if (wb && wb.SSF) XLSX.SSF.load(wb.SSF);
         return { wb, buf };
       }
 
-      async function extractStyles(buf){
-        try{
+      async function extractStyles(buf) {
+        try {
           const bytes = new Uint8Array(buf);
           const zip = fflate.unzipSync(bytes);
           const stylesXml = zip["xl/styles.xml"] ? td.decode(zip["xl/styles.xml"]) : null;
-          const wbXml     = zip["xl/workbook.xml"] ? td.decode(zip["xl/workbook.xml"]) : null;
-          const relsXml   = zip["xl/_rels/workbook.xml.rels"] ? td.decode(zip["xl/_rels/workbook.xml.rels"]) : null;
-          if(!stylesXml || !wbXml || !relsXml) return null;
+          const wbXml = zip["xl/workbook.xml"] ? td.decode(zip["xl/workbook.xml"]) : null;
+          const relsXml = zip["xl/_rels/workbook.xml.rels"] ? td.decode(zip["xl/_rels/workbook.xml.rels"]) : null;
+          if (!stylesXml || !wbXml || !relsXml) return null;
 
           const parse = (xml) => (new DOMParser()).parseFromString(xml, "application/xml");
           const sdoc = parse(stylesXml);
@@ -172,8 +323,8 @@
             const name = n.getElementsByTagName("name")[0]?.getAttribute("val");
             const col = n.getElementsByTagName("color")[0];
             const rgb = col?.getAttribute("rgb");
-            const color = rgb ? ("#"+rgb.slice(-6)) : null;
-            return { bold, italic, sz: sz? parseFloat(sz):null, name, color };
+            const color = rgb ? ("#" + rgb.slice(-6)) : null;
+            return { bold, italic, sz: sz ? parseFloat(sz) : null, name, color };
           });
 
           const fills = Array.from(sdoc.getElementsByTagName("fills")[0]?.getElementsByTagName("fill") || []).map(n => {
@@ -181,19 +332,19 @@
             const ptype = pf?.getAttribute("patternType");
             const fg = pf?.getElementsByTagName("fgColor")[0];
             const rgb = fg?.getAttribute("rgb");
-            const color = (ptype === "solid" && rgb) ? ("#"+rgb.slice(-6)) : null;
+            const color = (ptype === "solid" && rgb) ? ("#" + rgb.slice(-6)) : null;
             return { color };
           });
 
           const borders = Array.from(sdoc.getElementsByTagName("borders")[0]?.getElementsByTagName("border") || []).map(n => {
-            const has = ["left","right","top","bottom"].some(s => n.getElementsByTagName(s)[0]?.getAttribute("style"));
+            const has = ["left", "right", "top", "bottom"].some(s => n.getElementsByTagName(s)[0]?.getAttribute("style"));
             return { has };
           });
 
           const xfs = Array.from(sdoc.getElementsByTagName("cellXfs")[0]?.getElementsByTagName("xf") || []).map(xf => {
-            const fontId = parseInt(xf.getAttribute("fontId") ?? "-1",10);
-            const fillId = parseInt(xf.getAttribute("fillId") ?? "-1",10);
-            const borderId = parseInt(xf.getAttribute("borderId") ?? "-1",10);
+            const fontId = parseInt(xf.getAttribute("fontId") ?? "-1", 10);
+            const fillId = parseInt(xf.getAttribute("fillId") ?? "-1", 10);
+            const borderId = parseInt(xf.getAttribute("borderId") ?? "-1", 10);
             const align = xf.getElementsByTagName("alignment")[0];
             const alignment = align ? {
               horizontal: align.getAttribute("horizontal") || null,
@@ -206,44 +357,44 @@
           const wdoc = parse(wbXml);
           const sheets = Array.from(wdoc.getElementsByTagName("sheet")).map(s => ({
             name: s.getAttribute("name"),
-            rid:  s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || s.getAttribute("r:id")
+            rid: s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || s.getAttribute("r:id")
           }));
           const rdoc = parse(relsXml);
           const rels = {};
-          Array.from(rdoc.getElementsByTagName("Relationship")).forEach(r=>{
+          Array.from(rdoc.getElementsByTagName("Relationship")).forEach(r => {
             rels[r.getAttribute("Id")] = r.getAttribute("Target");
           });
 
           const sheetPathByName = {};
           sheets.forEach(s => {
             const tgt = rels[s.rid];
-            if (tgt) sheetPathByName[s.name] = "xl/" + tgt.replace(/^\//,"");
+            if (tgt) sheetPathByName[s.name] = "xl/" + tgt.replace(/^\//, "");
           });
 
           const sheetCellXf = {};
-          for (const [sheetName, pth] of Object.entries(sheetPathByName)){
+          for (const [sheetName, pth] of Object.entries(sheetPathByName)) {
             const entry = zip[pth];
             if (!entry) continue;
             const sxml = td.decode(entry);
             const doc = parse(sxml);
             const cells = doc.getElementsByTagName("c");
             const map = {};
-            for (let i=0;i<cells.length;i++){
+            for (let i = 0; i < cells.length; i++) {
               const c = cells[i];
               const r = c.getAttribute("r");
               const s = c.getAttribute("s");
-              if (r && s) map[r] = parseInt(s,10);
+              if (r && s) map[r] = parseInt(s, 10);
             }
             sheetCellXf[sheetName] = map;
           }
 
           return { fonts, fills, borders, xfs, sheetCellXf };
-        }catch(_){
+        } catch (_) {
           return null;
         }
       }
 
-      async function buildHF({ primaryPath, linkedFiles }){
+      async function buildHF({ primaryPath, linkedFiles }) {
         if (!window.HyperFormula) return { hf: null, sheetOffsets: {}, date1904BySheet: {} };
 
         const paths = [primaryPath, ...linkedFiles.filter(p => p !== primaryPath)];
@@ -257,7 +408,9 @@
 
           const names = (wb.Workbook && wb.Workbook.Names) || [];
           const nameMap = {};
-          names.forEach(n => { if (n && n.Name && n.Ref) nameMap[n.Name] = n.Ref; });
+          names.forEach(n => {
+            if (n && n.Name && n.Ref) nameMap[n.Name] = n.Ref;
+          });
 
           workbooks.push({ path: p, wb, nameMap });
         }
@@ -282,12 +435,13 @@
             const ws = wb.Sheets[name];
             const ref = ws["!ref"] || "A1:A1";
             const r = XLSX.utils.decode_range(ref);
-            const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1;
-            const aoa  = Array.from({length: rows}, () => Array(cols).fill(null));
+            const rows = r.e.r - r.s.r + 1;
+            const cols = r.e.c - r.s.c + 1;
+            const aoa = Array.from({ length: rows }, () => Array(cols).fill(null));
 
-            for (let R=r.s.r; R<=r.e.r; ++R){
-              for (let C=r.s.c; C<=r.e.c; ++C){
-                const addr = XLSX.utils.encode_cell({r:R,c:C});
+            for (let R = r.s.r; R <= r.e.r; ++R) {
+              for (let C = r.s.c; C <= r.e.c; ++C) {
+                const addr = XLSX.utils.encode_cell({ r: R, c: C });
                 const cell = ws[addr];
                 if (!cell) continue;
                 if (cell.f) {
@@ -309,7 +463,7 @@
         return { hf, sheetOffsets, date1904BySheet };
       }
 
-      function applyExcelStyle(td, styleCtx, sheetName, addr){
+      function applyExcelStyle(td, styleCtx, sheetName, addr) {
         if (!styleCtx) return;
         const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
         if (xfIdx == null) return;
@@ -317,137 +471,161 @@
         const fill = (xf.fillId != null) ? styleCtx.fills[xf.fillId] : null;
         if (fill && fill.color) td.style.backgroundColor = fill.color;
         const font = (xf.fontId != null) ? styleCtx.fonts[xf.fontId] : null;
-        if (font){
+        if (font) {
           if (font.bold) td.style.fontWeight = "700";
           if (font.italic) td.style.fontStyle = "italic";
           if (font.color) td.style.color = font.color;
           if (font.sz) td.style.fontSize = font.sz + "px";
           if (font.name) td.style.fontFamily = font.name + ", " + getComputedStyle(document.body).fontFamily;
         }
-        if (xf.alignment){
+        if (xf.alignment) {
           if (xf.alignment.horizontal) td.style.textAlign = xf.alignment.horizontal;
-          if (xf.alignment.vertical)   td.style.verticalAlign = xf.alignment.vertical;
-          if (xf.alignment.wrapText){ td.style.whiteSpace = "normal"; td.style.wordBreak = "break-word"; }
+          if (xf.alignment.vertical) td.style.verticalAlign = xf.alignment.vertical;
+          if (xf.alignment.wrapText) {
+            td.style.whiteSpace = "normal";
+            td.style.wordBreak = "break-word";
+          }
         }
       }
 
-      function pxFromCol(col){
+      function pxFromCol(col) {
         if (!col) return null;
         if (col.wpx) return Math.round(col.wpx);
         if (col.wch) return Math.round(col.wch * 7 + 5);
         return null;
       }
 
-      function formatUsingCell(val, cell, sheetName, date1904BySheet){
+      function formatUsingCell(val, cell, sheetName, date1904BySheet) {
         if (val === null || val === undefined) return "";
         if (val && typeof val === "object" && "type" in val) {
           if (cell && typeof cell.w === "string" && cell.w.trim()) return cell.w;
-          const map = { NAME:"#NAME?", REF:"#REF!", DIV_BY_ZERO:"#DIV/0!", VALUE:"#VALUE!", NUM:"#NUM!", NA:"#N/A" };
+          const map = { NAME: "#NAME?", REF: "#REF!", DIV_BY_ZERO: "#DIV/0!", VALUE: "#VALUE!", NUM: "#NUM!", NA: "#N/A" };
           return map[val.type] || "#ERROR";
         }
         if (cell && cell.z !== undefined) {
-          try{
+          try {
             let v = val;
             if (isDateFmt(cell.z) && date1904BySheet[sheetName]) v = Number(v) + 1462;
             return XLSX.SSF.format(cell.z, v);
-          }catch{}
+          } catch {}
         }
-        if (cell && typeof val === "number" && typeof cell.w === "string" && cell.w.trim()){
-          const w = cell.w, hasPct = /%/.test(w), hasGBP = /£/.test(w);
-          const mDec = w.match(/\.([0-9]+)/); const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
+        if (cell && typeof val === "number" && typeof cell.w === "string" && cell.w.trim()) {
+          const w = cell.w;
+          const hasPct = /%/.test(w);
+          const hasGBP = /£/.test(w);
+          const mDec = w.match(/\.([0-9]+)/);
+          const decimals = mDec ? mDec[1].length : (hasPct ? 0 : 2);
           const useGrouping = /,/.test(w) || Math.abs(val) >= 1000;
           const opts = { maximumFractionDigits: decimals, minimumFractionDigits: decimals, useGrouping };
-          if (hasGBP){ opts.style = "currency"; opts.currency = "GBP"; }
-          if (hasPct){ opts.style = "percent"; }
-          try{ return new Intl.NumberFormat("en-GB", opts).format(val); }catch{}
+          if (hasGBP) {
+            opts.style = "currency";
+            opts.currency = "GBP";
+          }
+          if (hasPct) {
+            opts.style = "percent";
+          }
+          try {
+            return new Intl.NumberFormat("en-GB", opts).format(val);
+          } catch {}
         }
         return (typeof val === "number") ? new Intl.NumberFormat("en-GB").format(val) : String(val);
       }
 
-      function renderSheet({ container, ws, sheetName, hf, styleCtx, showFormulae, sheetOffsets, date1904BySheet, MAX_R, MAX_C }){
+      function renderSheet({ container, ws, sheetName, hf, styleCtx, showFormulae, sheetOffsets, date1904BySheet, MAX_R, MAX_C }) {
         const ref = ws["!ref"] || "A1:A1";
         const range = XLSX.utils.decode_range(ref);
-        const rowOffset = range.s.r, colOffset = range.s.c;
+        const rowOffset = range.s.r;
+        const colOffset = range.s.c;
         range.e.r = Math.min(range.e.r, range.s.r + MAX_R - 1);
         range.e.c = Math.min(range.e.c, range.s.c + MAX_C - 1);
 
         const merges = ws["!merges"] || [];
         const mergeTopLeft = new Map();
         const covered = new Set();
-        merges.forEach(m=>{
+        merges.forEach(m => {
           const top = XLSX.utils.encode_cell(m.s);
-          const rowspan = m.e.r - m.s.r + 1, colspan = m.e.c - m.s.c + 1;
+          const rowspan = m.e.r - m.s.r + 1;
+          const colspan = m.e.c - m.s.c + 1;
           mergeTopLeft.set(top, { rowspan, colspan });
-          for(let r=m.s.r;r<=m.e.r;r++){
-            for(let c=m.s.c;c<=m.e.c;c++){
-              const addr = XLSX.utils.encode_cell({r,c});
-              if (addr!==top) covered.add(addr);
+          for (let r = m.s.r; r <= m.e.r; r++) {
+            for (let c = m.s.c; c <= m.e.c; c++) {
+              const addr = XLSX.utils.encode_cell({ r, c });
+              if (addr !== top) covered.add(addr);
             }
           }
         });
 
         const colMeta = ws["!cols"] || [];
         const colWidthPx = [];
-        for(let C=range.s.c; C<=range.e.c; ++C){
+        for (let C = range.s.c; C <= range.e.c; ++C) {
           const width = pxFromCol(colMeta[C]);
           colWidthPx[C] = width;
         }
 
         const table = document.createElement("table");
 
-        // Head
         const thead = document.createElement("thead");
         const trh = document.createElement("tr");
-        const thCorner = document.createElement("th"); thCorner.className="firstcol"; trh.appendChild(thCorner);
-        for(let C=range.s.c; C<=range.e.c; ++C){
+        const thCorner = document.createElement("th");
+        thCorner.className = "firstcol";
+        trh.appendChild(thCorner);
+        for (let C = range.s.c; C <= range.e.c; ++C) {
           const th = document.createElement("th");
           th.textContent = XLSX.utils.encode_col(C);
-          th.setAttribute("scope","col");
+          th.setAttribute("scope", "col");
           const wpx = colWidthPx[C];
-          if (wpx){ th.style.width = wpx+"px"; th.style.maxWidth = wpx+"px"; }
+          if (wpx) {
+            th.style.width = wpx + "px";
+            th.style.maxWidth = wpx + "px";
+          }
           trh.appendChild(th);
         }
         thead.appendChild(trh);
         table.appendChild(thead);
 
-        // Body
         const tbody = document.createElement("tbody");
         const rowMeta = ws["!rows"] || [];
-
         const activeSheetId = hf ? hf.getSheetId(sheetName) : null;
 
-        for(let R=range.s.r; R<=range.e.r; ++R){
+        for (let R = range.s.r; R <= range.e.r; ++R) {
           const tr = document.createElement("tr");
           const rmeta = rowMeta[R];
-          if (rmeta && (rmeta.hpx || rmeta.hpt)){
-            const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt*96/72);
+          if (rmeta && (rmeta.hpx || rmeta.hpt)) {
+            const h = rmeta.hpx ? Math.round(rmeta.hpx) : Math.round(rmeta.hpt * 96 / 72);
             tr.style.height = h + "px";
           }
 
           const rowHead = document.createElement("th");
-          rowHead.className="firstcol";
-          rowHead.textContent = (R+1);
-          rowHead.setAttribute("scope","row");
+          rowHead.className = "firstcol";
+          rowHead.textContent = (R + 1);
+          rowHead.setAttribute("scope", "row");
           tr.appendChild(rowHead);
 
-          for(let C=range.s.c; C<=range.e.c; ++C){
-            const addr = XLSX.utils.encode_cell({r:R,c:C});
+          for (let C = range.s.c; C <= range.e.c; ++C) {
+            const addr = XLSX.utils.encode_cell({ r: R, c: C });
             if (covered.has(addr)) continue;
             const td = document.createElement("td");
             const cell = ws[addr];
             td.dataset.address = addr;
 
             const m = mergeTopLeft.get(addr);
-            if (m){ if (m.rowspan>1) td.rowSpan = m.rowspan; if (m.colspan>1) td.colSpan = m.colspan; }
+            if (m) {
+              if (m.rowspan > 1) td.rowSpan = m.rowspan;
+              if (m.colspan > 1) td.colSpan = m.colspan;
+            }
 
             const wpx = colWidthPx[C];
-            if (wpx){ td.style.width = wpx+"px"; td.style.maxWidth = wpx+"px"; }
+            if (wpx) {
+              td.style.width = wpx + "px";
+              td.style.maxWidth = wpx + "px";
+            }
 
             let displayText = "";
             if (showFormulae && cell && cell.f) {
               displayText = "=" + (cell.f || "");
             } else if (hf && activeSheetId != null) {
-              const hfRow = R - rowOffset, hfCol = C - colOffset;
+              const hfRow = R - rowOffset;
+              const hfCol = C - colOffset;
               const val = hf.getCellValue({ sheet: activeSheetId, row: hfRow, col: hfCol });
               displayText = formatUsingCell(val, cell, sheetName, date1904BySheet);
             } else {
@@ -456,8 +634,8 @@
 
             td.textContent = displayText;
             td.title = (cell && cell.f) ? ("=" + cell.f)
-                     : (cell && cell.v !== undefined ? String(cell.v) : displayText);
-            if(cell && cell.t === "n" && !cell.f) td.style.textAlign = "right";
+              : (cell && cell.v !== undefined ? String(cell.v) : displayText);
+            if (cell && cell.t === "n" && !cell.f) td.style.textAlign = "right";
 
             applyExcelStyle(td, styleCtx, sheetName, addr);
             tr.appendChild(td);
@@ -466,7 +644,6 @@
         }
         table.appendChild(tbody);
 
-        // Mount
         container.innerHTML = "";
         container.appendChild(table);
         return { table };
@@ -476,30 +653,29 @@
     })();
   </script>
 
-  <!-- Viewer UI (module) -->
   <script type="module" src="./viewer.js"></script>
 
-  <!-- Back button handler identical to backup -->
   <script>
-    (function () {
+    (function() {
       const el = document.getElementById('backToLanding');
       if (!el) return;
 
-      (function setSafeHref(){
+      function getBasePath() {
         const isGH = /\.github\.io$/i.test(location.hostname);
         const segs = location.pathname.split('/').filter(Boolean);
         const repo = isGH ? (segs[0] || '') : '';
-        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
-        el.setAttribute('href', basePath + '?noredir=' + Date.now());
-      })();
+        return (isGH && repo) ? '/' + repo + '/' : '/';
+      }
 
-      el.addEventListener('click', function (e) {
+      function setSafeHref() {
+        el.setAttribute('href', getBasePath() + '?noredir=' + Date.now());
+      }
+
+      setSafeHref();
+
+      el.addEventListener('click', function(e) {
         e.preventDefault();
-        const isGH = /\.github\.io$/i.test(location.hostname);
-        const segs = location.pathname.split('/').filter(Boolean);
-        const repo = isGH ? (segs[0] || '') : '';
-        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
-        const url = location.origin + basePath + '?noredir=' + Date.now();
+        const url = location.origin + getBasePath() + '?noredir=' + Date.now();
         location.replace(url);
       }, { passive: false });
     })();

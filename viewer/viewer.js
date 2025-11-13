@@ -336,56 +336,45 @@ function loadChartLibsOnce(){
   chartLibPromise = (async ()=>{
     await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
-    await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
-    
-    // Wait a tick for scripts to fully initialize
-    await new Promise(resolve => setTimeout(resolve, 50));
-    
+
+    let pluginModule = null;
+    try{
+      pluginModule = await import("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.esm.js");
+    }catch(e){
+      console.warn("[charts] Failed to import financial plugin via ESM:", e);
+    }
+
     if (window.Chart && window.Chart.register) {
       const registrables = [];
-      
-      // Try multiple ways to find the financial plugin exports
-      const pluginGlobal = window["chartjs-chart-financial"];
-      if (pluginGlobal) {
-        // Plugin might export everything directly
-        if (typeof pluginGlobal === "object") {
-          Object.values(pluginGlobal).forEach(obj => {
-            if (obj && (obj.id || obj.prototype?.id)) {
-              registrables.push(obj);
-            }
-          });
-        }
-        // Or it might have specific exports
-        if (pluginGlobal.OhlcController) registrables.push(pluginGlobal.OhlcController);
-        if (pluginGlobal.OhlcElement) registrables.push(pluginGlobal.OhlcElement);
-        if (pluginGlobal.CandlestickController) registrables.push(pluginGlobal.CandlestickController);
-        if (pluginGlobal.CandlestickElement) registrables.push(pluginGlobal.CandlestickElement);
+
+      if (pluginModule && typeof pluginModule === "object") {
+        Object.values(pluginModule).forEach(obj => {
+          if (obj && (obj.id || obj.prototype?.id)) registrables.push(obj);
+        });
       }
-      
-      // Also check Chart namespace
-      if (window.Chart.OhlcController) registrables.push(window.Chart.OhlcController);
-      if (window.Chart.OhlcElement) registrables.push(window.Chart.OhlcElement);
-      if (window.Chart.CandlestickController) registrables.push(window.Chart.CandlestickController);
-      if (window.Chart.CandlestickElement) registrables.push(window.Chart.CandlestickElement);
-      
-      // Remove duplicates
-      const seen = new Set();
-      const unique = registrables.filter(obj => {
-        const key = obj.id || obj.prototype?.id || obj.name || String(obj);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      
-      if (unique.length) {
-        try { 
+
+      // Fallback: if module failed but global auto-registered, nothing to do.
+      if (!registrables.length && window.Chart.registry?.getController("ohlc")) {
+        console.info("[charts] Financial plugin already registered (ohlc controller present).");
+        return;
+      }
+
+      if (registrables.length) {
+        const seen = new Set();
+        const unique = registrables.filter(obj => {
+          const key = obj.id || obj.prototype?.id || obj.name || String(obj);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        try{
           window.Chart.register(...unique);
           console.info("[charts] Registered financial plugin controllers:", unique.map(o => o.id || o.name || "unknown"));
-        } catch(e) {
-          console.warn("[charts] Failed to register financial plugin:", e);
+        }catch(e){
+          console.warn("[charts] Failed to register financial plugin controllers:", e);
         }
       } else {
-        console.warn("[charts] No financial plugin controllers found to register");
+        console.warn("[charts] Financial plugin not available; stock charts will fall back.");
       }
     }
   })();
@@ -480,7 +469,11 @@ function excelSerialToDate(serial, use1904){
 /* Extract charts from XLSX ArrayBuffer */
 async function extractChartsFromXLSX(arrayBuffer){
   try{
-    const zipRaw = fflate.unzipSync(new Uint8Array(arrayBuffer));
+    const fflateLib = globalThis.fflate;
+    if (!fflateLib || typeof fflateLib.unzipSync !== "function") {
+      throw new Error("fflate is not defined (ensure the UMD script loads before viewer.js)");
+    }
+    const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
     // case-insensitive view over zip entries
     const zip = {};
     Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
