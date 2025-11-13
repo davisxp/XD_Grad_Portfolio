@@ -337,6 +337,21 @@ function loadChartLibsOnce(){
     await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
+    if (window.Chart && window.Chart.register && window["chartjs-chart-financial"]) {
+      const plugin = window["chartjs-chart-financial"];
+      const candidates = [
+        plugin.FinancialController,
+        plugin.CandlestickController,
+        plugin.OhlcController,
+        plugin.FinancialElement,
+        plugin.CandlestickElement,
+        plugin.OhlcElement,
+        plugin.ScaledFinancialElement
+      ].filter(Boolean);
+      if (candidates.length) {
+        try { window.Chart.register(...candidates); } catch(_) {}
+      }
+    }
   })();
   return chartLibPromise;
 }
@@ -344,12 +359,80 @@ function loadChartLibsOnce(){
 /* Helpers shared by extractor and renderer */
 const tdDecoder = new TextDecoder("utf-8");
 const byLocal = (root, name) => Array.from(root.getElementsByTagName("*")).filter(n => n.localName === name);
+const CHART_TYPE_ORDER = [
+  "lineChart","line3DChart","barChart","bar3DChart","columnChart","column3DChart",
+  "areaChart","area3DChart","scatterChart","bubbleChart","pieChart","pie3DChart",
+  "doughnutChart","radarChart","histogramChart","stockChart","waterfallChart",
+  "funnelChart","boxWhiskerChart","sunburstChart","treemapChart","surfaceChart",
+  "surface3DChart","wireframeSurfaceChart","wireframeSurface3DChart","paretoChart",
+  "comboChart","ofPieChart"
+];
+const CHART_TYPE_FALLBACK = {
+  lineChart: "line",
+  line3DChart: "line",
+  barChart: "bar",
+  bar3DChart: "bar",
+  columnChart: "bar",
+  column3DChart: "bar",
+  areaChart: "area",
+  area3DChart: "area",
+  scatterChart: "scatter",
+  bubbleChart: "bubble",
+  pieChart: "pie",
+  pie3DChart: "pie",
+  doughnutChart: "doughnut",
+  radarChart: "radar",
+  histogramChart: "histogram",
+  paretoChart: "bar",
+  stockChart: "stock",
+  waterfallChart: "waterfall",
+  funnelChart: "funnel",
+  boxWhiskerChart: "boxWhisker",
+  sunburstChart: "sunburst",
+  treemapChart: "treemap",
+  surfaceChart: "surface",
+  surface3DChart: "surface",
+  wireframeSurfaceChart: "surface",
+  wireframeSurface3DChart: "surface",
+  comboChart: "combo",
+  ofPieChart: "pie"
+};
 
 function normalisePath(base, target){
-  // Build a normalised path under xl/
-  const t = (target || "").replace(/^\//,"").replace(/^(\.\.\/)+/g,"");
-  if (/^xl\//i.test(base)) return "xl/" + t.replace(/^xl\//i, "");
-  return "xl/" + t.replace(/^xl\//i, "");
+  if (!target) return null;
+  const clean = target.replace(/\\/g, "/");
+  // Absolute inside package (starts with /)
+  if (/^\//.test(clean)) {
+    return clean.replace(/^\//, "").toLowerCase();
+  }
+
+  const baseDirParts = (base ? base.split("/").slice(0, -1) : []);
+  const rawParts = clean.split("/");
+  const stack = [];
+
+  function pushParts(parts){
+    parts.forEach(part => {
+      if (!part || part === ".") return;
+      if (part === "..") {
+        if (stack.length) stack.pop();
+      } else {
+        stack.push(part);
+      }
+    });
+  }
+
+  if (/^xl\//i.test(clean)) {
+    pushParts(clean.split("/"));
+  } else {
+    pushParts(baseDirParts);
+    pushParts(rawParts);
+  }
+
+  // Ensure scoped under xl/ for safety
+  if (stack.length && stack[0].toLowerCase() !== "xl") {
+    stack.unshift("xl");
+  }
+  return stack.join("/").toLowerCase();
 }
 
 function excelSerialToDate(serial, use1904){
@@ -391,117 +474,141 @@ async function extractChartsFromXLSX(arrayBuffer){
       return { name: s.name, path, kind };
     });
 
-    function readLitOrCache(parent){
-      // Try cached data first (pivot charts often rely on caches)
-      const cache = byLocal(parent, "numCache")[0] || byLocal(parent, "strCache")[0];
-      if (cache){
-        const pts = byLocal(cache, "pt"); const arr = [];
-        pts.forEach(pt=>{
-          const idx = parseInt(pt.getAttribute("idx")||"0",10);
-          const v = byLocal(pt, "v")[0];
-          arr[idx] = v ? v.textContent : null;
+    function collectPoints(node){
+      if (!node) return null;
+      const pts = [];
+      const lvlNodes = byLocal(node, "lvl");
+      if (lvlNodes.length){
+        const buckets = [];
+        lvlNodes.forEach((lvl, depth)=>{
+          const members = byLocal(lvl, "pt");
+          members.forEach(member=>{
+            const idx = parseInt(member.getAttribute("idx") ?? `${buckets.length}`, 10);
+            const valAttr = member.getAttribute("val");
+            const vNode = byLocal(member, "v")[0];
+            const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : member.textContent);
+            if (!buckets[idx]) buckets[idx] = [];
+            buckets[idx][depth] = text;
+          });
         });
-        if (arr.length) return arr;
+        return buckets.map(path => (path || []).filter(Boolean).join(" / "));
       }
-      // Then literal
-      const lit = byLocal(parent, "numLit")[0] || byLocal(parent, "strLit")[0];
-      if (lit){
-        const pts = byLocal(lit, "pt"); const arr = [];
-        pts.forEach(pt=>{
-          const idx = parseInt(pt.getAttribute("idx")||"0",10);
-          const v = byLocal(pt, "v")[0];
-          arr[idx] = v ? v.textContent : null;
+
+      const pointNodes = byLocal(node, "pt");
+      pointNodes.forEach(pt=>{
+        const idxAttr = pt.getAttribute("idx");
+        const idx = idxAttr != null ? parseInt(idxAttr, 10) : pts.length;
+        const valAttr = pt.getAttribute("val");
+        const vNode = byLocal(pt, "v")[0];
+        const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : pt.textContent);
+        pts[idx] = text;
+      });
+      if (pts.length) return pts;
+
+      const nary = byLocal(node, "ptValue");
+      if (nary.length){
+        nary.forEach((pt, i)=>{
+          const idxAttr = pt.getAttribute("idx");
+          const idx = idxAttr != null ? parseInt(idxAttr, 10) : i;
+          pts[idx] = pt.textContent;
         });
-        if (arr.length) return arr;
+      }
+      return pts.length ? pts : null;
+    }
+
+    function firstDescendantWithLocal(node, localNames){
+      if (!node) return null;
+      const wanted = Array.isArray(localNames) ? localNames : [localNames];
+      const all = node.getElementsByTagName("*");
+      for (let i=0;i<all.length;i++){
+        const el = all[i];
+        if (wanted.includes(el.localName)) return el;
       }
       return null;
     }
-    function pickRefOrData(sNode, parentNames){
+
+    function pickRefOrData(seriesNode, candidates){
       let refF = null, data = null;
-      for (const nm of parentNames){
-        const p = byLocal(sNode, nm)[0];
-        if (!p) continue;
-        const numRef = byLocal(p, "numRef")[0] || byLocal(p, "strRef")[0];
-        if (numRef){
-          const f = byLocal(numRef, "f")[0];
-          if (f && f.textContent) { refF = f.textContent.trim(); }
-          if (!data){
-            const cached = readLitOrCache(numRef);
-            if (cached) data = cached;
+      for (const candidate of candidates){
+        const containers = byLocal(seriesNode, candidate);
+        for (const container of containers){
+          const refNode = firstDescendantWithLocal(container, ["numRef","strRef","numData","strData","multiLvlStrRef"]);
+          if (refNode && !refF){
+            const fNode = firstDescendantWithLocal(refNode, "f");
+            if (fNode && fNode.textContent) refF = fNode.textContent.trim();
           }
-          if (refF) break;
+          if (!data){
+            data = collectPoints(refNode) || collectPoints(container);
+          }
+          if (refF || data) break;
         }
-        // fallbacks
-        const lit = readLitOrCache(p);
-        if (lit && !data) data = lit;
+        if (refF || data) break;
       }
       return { refF, data };
     }
-    function parseChartPart(u8){
-      const doc = parse(u8);
-      const order = [
-        "lineChart","line3DChart","barChart","bar3DChart","columnChart",
-        "areaChart","area3DChart","scatterChart","bubbleChart",
-        "pieChart","pie3DChart","doughnutChart","radarChart",
-        "histogramChart","stockChart","waterfallChart","funnelChart","boxWhiskerChart","sunburstChart","treemapChart"
-      ];
-      const typeNode = order.map(t => byLocal(doc, t)[0]).find(Boolean);
-      if (!typeNode) return null;
-
-      let type = typeNode.localName;
-      if (/histogram/i.test(type)) type = "histogram";
-      else if (/stock/i.test(type)) type = "stock";
-      else if (/bubble/i.test(type)) type = "bubble";
-      else if (/radar/i.test(type)) type = "radar";
-      else if (/doughnut/i.test(type)) type = "doughnut";
-      else if (/pie/i.test(type)) type = "pie";
-      else if (/scatter/i.test(type)) type = "scatter";
-      else if (/bar|column/i.test(type)) type = "bar";
-      else if (/area/i.test(type)) type = "area";
-      else if (/line/i.test(type)) type = "line";
-      else type = "line";
-
-      let titleF = null, titleText = null;
-      const tN = byLocal(doc, "title")[0];
-      if (tN){
-        const strRef = byLocal(tN, "strRef")[0];
-        const vNode = byLocal(tN, "v")[0];
-        if (strRef){
-          const fNode = byLocal(strRef, "f")[0];
-          if (fNode && fNode.textContent) titleF = fNode.textContent.trim();
-        } else if (vNode){
-          titleText = vNode.textContent.trim();
-        }
+    function readSeriesName(txNode){
+      if (!txNode) return { nameF:null, nameV:null };
+      const ref = firstDescendantWithLocal(txNode, ["strRef","strData"]);
+      if (ref){
+        const fNode = firstDescendantWithLocal(ref, "f");
+        if (fNode && fNode.textContent) return { nameF: fNode.textContent.trim(), nameV: null };
+        const data = collectPoints(ref);
+        if (data && data.length) return { nameF: null, nameV: String(data[0] ?? "") };
       }
+      const vNode = firstDescendantWithLocal(txNode, ["v","t","r"]);
+      if (vNode && vNode.textContent) return { nameF:null, nameV: vNode.textContent.trim() };
+      const text = txNode.textContent?.trim();
+      return text ? { nameF:null, nameV:text } : { nameF:null, nameV:null };
+    }
 
-      // Series (supports both c:ser and cx:series)
+    function extractTitle(doc){
+      const titleNode = byLocal(doc, "title")[0];
+      if (!titleNode) return { titleF:null, titleText:null };
+      const ref = firstDescendantWithLocal(titleNode, ["strRef","strData"]);
+      if (ref){
+        const fNode = firstDescendantWithLocal(ref, "f");
+        if (fNode && fNode.textContent) return { titleF: fNode.textContent.trim(), titleText: null };
+        const data = collectPoints(ref);
+        if (data && data.length) return { titleF:null, titleText:String(data[0] ?? "") };
+      }
+      const vNode = firstDescendantWithLocal(titleNode, ["v","t"]);
+      if (vNode && vNode.textContent) return { titleF:null, titleText: vNode.textContent.trim() };
+      const text = titleNode.textContent?.trim();
+      return text ? { titleF:null, titleText:text } : { titleF:null, titleText:null };
+    }
+
+    function parseClassicChart(doc){
+      const typeNode = CHART_TYPE_ORDER.map(t => byLocal(doc, t)[0]).find(Boolean);
+      if (!typeNode) return null;
+      const mappedType = CHART_TYPE_FALLBACK[typeNode.localName] || "line";
+      const { titleF, titleText } = extractTitle(doc);
       const serNodes = byLocal(typeNode, "ser").concat(byLocal(typeNode, "series"));
       const series = serNodes.map(sN => {
-        let nameF = null, nameV = null;
-        const tx = byLocal(sN, "tx")[0];
-        if (tx){
-          const strRef = byLocal(tx, "strRef")[0];
-          const vNode = byLocal(tx, "v")[0];
-          if (strRef){
-            const f = byLocal(strRef, "f")[0];
-            if (f && f.textContent) nameF = f.textContent.trim();
-          } else if (vNode){
-            nameV = vNode.textContent.trim();
-          }
-        }
-        const cat = pickRefOrData(sN, ["cat","xVal"]);
-        const y   = pickRefOrData(sN, ["val","yVal"]);
-        const z   = pickRefOrData(sN, ["bubbleSize"]);
+        const { nameF, nameV } = readSeriesName(byLocal(sN, "tx")[0]);
+        const cat = pickRefOrData(sN, ["cat","category","xVal","categories"]);
+        const y   = pickRefOrData(sN, ["val","yVal","values"]);
+        const z   = pickRefOrData(sN, ["bubbleSize","zVal","size","sizes"]);
         return {
-          nameF, nameV,
-          catRef: cat.refF || null, catData: cat.data || null,
-          xRef:   cat.refF || null, xData:  cat.data || null,
-          yRef:   y.refF   || null, yData:  y.data  || null,
-          zRef:   z.refF   || null, zData:  z.data  || null
+          nameF,
+          nameV,
+          catRef: cat.refF || null,
+          catData: cat.data || null,
+          xRef: cat.refF || null,
+          xData: cat.data || null,
+          yRef: y.refF || null,
+          yData: y.data || null,
+          zRef: z.refF || null,
+          zData: z.data || null
         };
       });
+      return { type: mappedType, titleF, titleText, series };
+    }
 
-      return { type, titleF, titleText, series };
+    function parseChartPart(u8){
+      const doc = parse(u8);
+      const classic = parseClassicChart(doc);
+      if (classic) return classic;
+      return null;
     }
 
     const chartsBySheet = {};
@@ -515,7 +622,8 @@ async function extractChartsFromXLSX(arrayBuffer){
           const relDoc = parse(relEntry);
           const drawRels = Array.from(relDoc.getElementsByTagName("Relationship")).filter(r => /drawing/i.test(r.getAttribute("Type")||""));
           for (const dr of drawRels){
-            const drawingPath = normalisePath(m.path, dr.getAttribute("Target")).toLowerCase();
+            const drawingPath = normalisePath(m.path, dr.getAttribute("Target"));
+            if (!drawingPath) continue;
             const drawingXml = zip[drawingPath];
             if (!drawingXml) continue;
 
@@ -525,7 +633,8 @@ async function extractChartsFromXLSX(arrayBuffer){
             if (!dRelsXml) continue;
             const dRels = {};
             Array.from(parse(dRelsXml).getElementsByTagName("Relationship")).forEach(r=>{
-              dRels[r.getAttribute("Id")] = normalisePath(drawingPath, r.getAttribute("Target")).toLowerCase();
+              const relPath = normalisePath(drawingPath, r.getAttribute("Target"));
+              if (relPath) dRels[r.getAttribute("Id")] = relPath;
             });
 
             const dDoc = parse(drawingXml);
@@ -550,7 +659,7 @@ async function extractChartsFromXLSX(arrayBuffer){
           const chartRel = Array.from(csDoc.getElementsByTagName("Relationship"))
             .find(r => /relationships\/chart/i.test(r.getAttribute("Type")||""));
           if (chartRel){
-            const chartPath = normalisePath(m.path, chartRel.getAttribute("Target")).toLowerCase();
+            const chartPath = normalisePath(m.path, chartRel.getAttribute("Target"));
             const chartXml = zip[chartPath];
             if (chartXml){
               const def = parseChartPart(chartXml);
@@ -857,7 +966,19 @@ async function renderChartsForActiveSheet(){
         label: evalSeriesName(s) || ("Series " + (i+1)),
         data: resolveY(s)
       }));
-      const chartType = (def.type === "area") ? "line" : (def.type === "bar" ? "bar" : "line");
+      const chartTypeMap = {
+        area: "line",
+        bar: "bar",
+        waterfall: "bar",
+        funnel: "bar",
+        boxWhisker: "bar",
+        treemap: "bar",
+        sunburst: "bar",
+        surface: "line",
+        combo: "bar",
+        line: "line"
+      };
+      const chartType = chartTypeMap[def.type] || "line";
       const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
       if (chartType === "line" && def.type === "area") {
         datasets.forEach(d => d.fill = true);
