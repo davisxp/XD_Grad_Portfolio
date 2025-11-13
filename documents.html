@@ -90,6 +90,7 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      /* ensure main fills available height under sticky nav */
       min-height: calc(100vh - var(--nav-height));
     }
     header.page-head {
@@ -110,6 +111,7 @@
       align-items:start;
       flex: 1 1 auto;
       min-height: 0; /* important for children to be able to scroll */
+      /* let the grid occupy the remaining content height */
       height: 100%;
     }
     .panel {
@@ -149,6 +151,7 @@
       margin-bottom:0;
       height: var(--controls-height);
       min-height: var(--controls-height);
+      flex: 0 0 auto;
     }
     .spacer { flex:1 }
 
@@ -158,15 +161,15 @@
       overflow:hidden;
       border:1px solid var(--border);
       background:#fff;
+      /* ensure the viewer grows to fill remaining space in the panel */
       flex: 1 1 auto;
       display:flex;
       flex-direction:column;
-      min-height: 0;
-      /* ensure the iframe-wrap uses all remaining height */
-      height: auto;
+      min-height: 0; /* crucial so children can scroll inside a flex context */
+      height: 100%;
     }
     /* iframe must stretch to fill container */
-    iframe { width:100%; height:100%; border:0; display:block; flex:1 1 auto; }
+    iframe { width:100%; height:100%; border:0; display:block; flex:1 1 auto; min-height: 480px; }
 
     .small { font-size:13px; color:var(--muted) }
 
@@ -176,6 +179,12 @@
       .doc-list { flex-direction:row; overflow:auto; gap:8px; padding-bottom:8px; }
       .doc-item { min-width:220px; flex: 0 0 auto; }
       .viewer-controls { height: 56px; min-height:56px; }
+      iframe { min-height: 360px; }
+    }
+
+    /* Extra safety: if the viewport is tall, allow iframe to take more sensible height */
+    @media (min-height:900px){
+      iframe { min-height: calc(100vh - var(--nav-height) - var(--controls-height) - 80px); }
     }
   </style>
 </head>
@@ -322,6 +331,12 @@
         activeInfo.textContent = doc.title + ' • Unsupported';
         notesEl.textContent = 'This file type cannot be previewed inline. Use Open to download.';
       }
+
+      // Accessibility: focus viewer so keyboard users know something changed
+      setTimeout(()=> {
+        iframeWrap.setAttribute('tabindex','-1');
+        iframeWrap.focus({preventScroll:true});
+      }, 250);
     }
 
     function officeEmbedURL(absFileURL){
