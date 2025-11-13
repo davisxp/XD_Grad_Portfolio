@@ -46,7 +46,7 @@
       display:flex; flex-direction:column; gap:12px; min-height:0;
     }
     .panel{
-      background:var(--panel); border:1px solid var(--border); border-radius:12px;
+      background:var(--panel); border:1px solid var(--border); border-radius:12px; 
       padding:12px; min-height:0;
     }
     .panel h2{margin:0 0 8px 0; font-size:14px}
@@ -90,7 +90,8 @@
 </head>
 <body class="excel">
   <header>
-    <a class="btn" href="https://davisxp.github.io/XD_Grad_Portfolio/">Back to landing page</a>
+    <!-- CHANGED: add id and neutral href so JS controls navigation -->
+    <a id="backToLanding" class="btn" href="#">Back to landing page</a>
     <h1>Live Spreadsheet Viewer</h1>
     <div class="spacer"></div>
 
@@ -139,7 +140,9 @@
     // === Workbooks (case-sensitive paths) ===
     const files = [
       { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
-      { path: "../models/DCF_SN.xlsx",            label: "Valuations" }
+      { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
+	  { path: "../models/Comps_Precs.xlsx", label: "Comparables and Precedent Valuations" },
+	  { path: "../models/Valuation_Overview.xlsx", label: "Valuation Overview" }
     ];
 
     // === Scenario bindings (multiple sheets/cells) ===
@@ -151,7 +154,7 @@
     ];
 
     // === External files needed for recalc ===
-    const LINKED_FILES = ["../models/3_Statement_Model.xlsx"];
+    const LINKED_FILES = ["../models/3_Statement_Model.xlsx","../models/DCF_SN.xlsx"];
 
     // Performance soft cap for enormous sheets
     const MAX_R = 1500, MAX_C = 80;
@@ -212,13 +215,16 @@
     function status(t){ statusEl.textContent = t; }
 
     // Utils
-    function stripBookRefs(formula) { return formula.replace(/\[[^\]]+\]/g, ''); }
+    function stripBookRefs(formula) {
+      return formula.replace(/\[(?:[^\]]+\.xlsx)\]/gi, '');
+    }
     function isDateFmt(fmt){ return typeof fmt === 'string' && /[dyhs]/i.test(fmt); }
 
     function formatUsingCell(val, cell, sheetName){
       if (val === null || val === undefined) return '';
-      // SHOW REAL HF ERRORS (do not mask with cached Excel text)
+      // Fallback to Excel cached text if HF returns an error object
       if (val && typeof val === 'object' && 'type' in val) {
+        if (cell && typeof cell.w === 'string' && cell.w.trim()) return cell.w;
         const map = { NAME:'#NAME?', REF:'#REF!', DIV_BY_ZERO:'#DIV/0!', VALUE:'#VALUE!', NUM:'#NUM!', NA:'#N/A' };
         return map[val.type] || '#ERROR';
       }
@@ -715,6 +721,39 @@
           renderSheet(currentWS);
         }
       });
+    })();
+  </script>
+
+  <!-- NEW: Back button handler that forces same-origin root and cache-busts any stale 301/HSTS -->
+  <script>
+    (function () {
+      const el = document.getElementById('backToLanding');
+      if (!el) return;
+
+      // Also set a safe href on load (useful for long-press / copy link on mobile)
+      (function setSafeHref(){
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+        el.setAttribute('href', basePath + '?noredir=' + Date.now());
+      })();
+
+      el.addEventListener('click', function (e) {
+        // Prevent any rogue default or global handlers from rewriting the URL
+        e.preventDefault();
+
+        const isGH = /\.github\.io$/i.test(location.hostname);
+        const segs = location.pathname.split('/').filter(Boolean);
+        const repo = isGH ? (segs[0] || '') : '';
+        const basePath = (isGH && repo) ? '/' + repo + '/' : '/';
+
+        // Build a fresh URL on the current origin. The query ensures it won't match an old cached redirect.
+        const url = location.origin + basePath + '?noredir=' + Date.now();
+
+        // Replace so the back stack isn't polluted
+        location.replace(url);
+      }, { passive: false });
     })();
   </script>
 </body>
