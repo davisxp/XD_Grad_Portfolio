@@ -467,12 +467,37 @@ function excelSerialToDate(serial, use1904){
 }
 
 /* Extract charts from XLSX ArrayBuffer */
+const FFLATE_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/fflate.min.js";
+let fflateReady = null;
+async function ensureFflateReady(){
+  if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") return globalThis.fflate;
+  if (typeof globalThis.ensureFflate === "function") {
+    try {
+      const lib = await globalThis.ensureFflate();
+      if (lib && typeof lib.unzipSync === "function") return lib;
+    } catch(_) {}
+  }
+  if (fflateReady) return fflateReady;
+  fflateReady = new Promise((resolve, reject)=>{
+    const script = document.createElement("script");
+    script.src = FFLATE_URL;
+    script.async = true;
+    script.onload = () => {
+      if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") resolve(globalThis.fflate);
+      else reject(new Error("fflate failed to initialise"));
+    };
+    script.onerror = () => reject(new Error("Unable to load fflate library"));
+    document.head.appendChild(script);
+  }).catch(err => {
+    fflateReady = null;
+    throw err;
+  });
+  return fflateReady;
+}
+
 async function extractChartsFromXLSX(arrayBuffer){
   try{
-    const fflateLib = globalThis.fflate;
-    if (!fflateLib || typeof fflateLib.unzipSync !== "function") {
-      throw new Error("fflate is not defined (ensure the UMD script loads before viewer.js)");
-    }
+    const fflateLib = await ensureFflateReady();
     const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
     // case-insensitive view over zip entries
     const zip = {};

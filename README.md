@@ -118,7 +118,7 @@ All models are available for direct download below. Files can be opened in Excel
 
 ---
 
-## 📧 Contact & Links
+## Contact & Links
 
 **Portfolio Maintainer:** Xavier Davis  
 **Last Updated:** 13 November 2025  
@@ -133,4 +133,3 @@ This portfolio is presented for educational and professional demonstration purpo
 
 ---
 
-*Built with precision. Designed for clarity. Presented for review.*

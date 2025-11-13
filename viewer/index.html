@@ -305,8 +305,33 @@
         return { wb, buf };
       }
 
+      const FFLATE_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/fflate.min.js";
+      async function ensureFflate(){
+        if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") return globalThis.fflate;
+        if (ensureFflate._promise) return ensureFflate._promise;
+        ensureFflate._promise = new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = FFLATE_URL;
+          script.async = true;
+          script.onload = () => {
+            if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") {
+              resolve(globalThis.fflate);
+            } else {
+              reject(new Error("fflate failed to load"));
+            }
+          };
+          script.onerror = () => reject(new Error("Unable to load fflate library"));
+          document.head.appendChild(script);
+        }).finally(() => {
+          ensureFflate._promise = null;
+        });
+        return ensureFflate._promise;
+      }
+      window.ensureFflate = ensureFflate;
+
       async function extractStyles(buf) {
         try {
+          const fflate = await ensureFflate();
           const bytes = new Uint8Array(buf);
           const zip = fflate.unzipSync(bytes);
           const stylesXml = zip["xl/styles.xml"] ? td.decode(zip["xl/styles.xml"]) : null;
