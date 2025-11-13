@@ -31,7 +31,7 @@ Use the **Contents** links below to download each file directly.
 - **[Three Statements](models/3_Statement_Model.xlsx?raw=1)**
 - **[DCF (multiples and perpetuity), SOTP Valuation, rNPV Valuation](models/DCF_SN.xlsx?raw=1)**
 - **[Comparables and Precedents Valuation](models/Comps_Precs.xlsx?raw=1)**
-- **[Valuation Overview] (models/Valuation_Overview.xlsx?raw=1)**
+- **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)**
 - **[Merger Accretion Dilution](models/Merger_Accretion_Dilution.xlsx?raw=1)**
 - **[LBO](models/LBO.xlsx?raw=1)**
 - **[Stock Issuance](models/Stock_Issuance.xlsx?raw=1)**
