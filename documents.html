@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Documents — Portfolio</title>
+  <meta name="description" content="Documents: valuation thesis, memos and supporting files" />
+  <style>
+    :root{
+      --bg:#ffffff; --panel:#ffffff; --muted:#4a4a4a; --border:#e6e8ee; --text:#1e1e1e; --accent:#17664b;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans";
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);padding:18px}
+    header{display:flex;gap:12px;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border)}
+    h1{margin:0;font-size:18px}
+    .spacer{flex:1}
+    .btn{background:transparent;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 10px;text-decoration:none;display:inline-block}
+    .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    main{display:grid;grid-template-columns:320px 1fr;gap:18px;margin-top:18px;min-height:60vh}
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px}
+    .doc-list{display:flex;flex-direction:column;gap:8px}
+    .doc-item{display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;border:1px solid transparent}
+    .doc-item:hover{border-color:var(--border);background:#fbfbfb}
+    .doc-meta{font-size:13px;color:var(--muted)}
+    .viewer-wrap{display:flex;flex-direction:column;gap:12px}
+    .viewer-controls{display:flex;gap:8px;align-items:center}
+    .iframe-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+    iframe{width:100%;height:640px;border:0;display:block}
+    summary{cursor:pointer;font-weight:600}
+    details[open] .doc-item{background:#fff}
+    .small{font-size:13px;color:var(--muted)}
+    @media (max-width:980px){ main{grid-template-columns:1fr} iframe{height:520px} }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="btn" href="./">Back to landing page</a>
+    <h1>Documents</h1>
+    <div class="spacer"></div>
+    <a class="btn primary" id="uploadTip" href="https://github.com/davisxp/XD_Grad_Portfolio">Manage files</a>
+  </header>
+
+  <main>
+    <aside class="panel">
+      <h2 style="margin:0 0 8px 0">Available documents</h2>
+      <div class="doc-list" id="docList">
+        <!-- JS will populate this list -->
+      </div>
+      <div class="small" style="margin-top:10px">Tip: put PDFs in <code>/models</code> or <code>/docs</code>. DOCX will download in most browsers; use PDF for embedded viewing.</div>
+    </aside>
+
+    <section class="panel viewer-wrap" aria-live="polite">
+      <div class="viewer-controls">
+        <div id="activeInfo" class="doc-meta">No document selected</div>
+        <div class="spacer"></div>
+        <button class="btn" id="closeBtn" disabled>Close</button>
+        <a class="btn primary" id="openOffice" target="_blank" rel="noopener">Open in Office Viewer</a>
+      </div>
+
+      <div class="iframe-wrap" id="iframeWrap" style="display:none">
+        <!-- lazy-loaded iframe -->
+        <iframe id="docFrame" src="" title="Document viewer"></iframe>
+      </div>
+
+      <div id="notes" class="small" style="margin-top:8px"></div>
+    </section>
+  </main>
+
+  <script>
+    // Put your document list here. Use the repo-relative path.
+    // Example: { id: 'valuation', title:'Valuation Thesis (PDF)', path:'models/Valuation_Thesis.pdf', type:'pdf', date:'2025-11-01' }
+    const DOCUMENTS = [
+      { id:'valuation', title:'Valuation Thesis (PDF)', path:'models/Valuation_Thesis.pdf', type:'pdf', date:'2025-11-01' },
+      { id:'thesis', title:'Investment Memo (PDF)', path:'models/Investment_Memo.pdf', type:'pdf', date:'2025-10-25' },
+      { id:'support', title:'Supporting Appendix (DOCX)', path:'models/Appendix.docx', type:'docx', date:'2025-10-30' }
+    ];
+
+    const docList = document.getElementById('docList');
+    const docFrame = document.getElementById('docFrame');
+    const iframeWrap = document.getElementById('iframeWrap');
+    const activeInfo = document.getElementById('activeInfo');
+    const closeBtn = document.getElementById('closeBtn');
+    const openOfficeBtn = document.getElementById('openOffice');
+    const notesEl = document.getElementById('notes');
+
+    // Build list
+    DOCUMENTS.forEach(doc=>{
+      const row = document.createElement('div');
+      row.className = 'doc-item';
+      const left = document.createElement('div');
+      left.innerHTML = `<div style="font-weight:600">${doc.title}</div><div class="doc-meta">${doc.date} • ${doc.type.toUpperCase()}</div>`;
+      const right = document.createElement('div');
+      const btnOpen = document.createElement('button');
+      btnOpen.className = 'btn';
+      btnOpen.textContent = 'Open';
+      btnOpen.addEventListener('click', ()=> openDocument(doc));
+      const btnPreview = document.createElement('button');
+      btnPreview.className = 'btn';
+      btnPreview.textContent = 'Preview';
+      btnPreview.addEventListener('click', ()=> previewDocument(doc));
+      right.appendChild(btnPreview); right.appendChild(btnOpen);
+      row.appendChild(left); row.appendChild(right);
+      docList.appendChild(row);
+    });
+
+    function openDocument(doc){
+      // Open file in new tab (download or Office viewer depending on type)
+      if(doc.type==='pdf'){
+        window.open(doc.path, '_blank', 'noopener');
+      } else {
+        // prefer Office viewer for docx
+        const office = officeEmbedURL(new URL(doc.path, location.href).href);
+        window.open(office, '_blank', 'noopener');
+      }
+    }
+
+    function previewDocument(doc){
+      notesEl.textContent = '';
+      if(doc.type === 'pdf'){
+        // embed directly
+        docFrame.src = doc.path + '?t=' + Date.now();
+        iframeWrap.style.display = 'block';
+        activeInfo.textContent = doc.title + ' • Preview';
+        closeBtn.disabled = false;
+        openOfficeBtn.href = officeEmbedURL(new URL(doc.path, location.href).href) + '&wdDownloadButton=TRUE';
+        // smooth scroll to viewer on small screens
+        docFrame.scrollIntoView({behavior:'smooth', block:'center'});
+      } else if(doc.type === 'docx'){
+        // DOCX: try Office Viewer inline, fallback to download
+        const officeURL = officeEmbedURL(new URL(doc.path, location.href).href) + '&wdDownloadButton=TRUE';
+        docFrame.src = officeURL;
+        iframeWrap.style.display = 'block';
+        activeInfo.textContent = doc.title + ' • Preview (Office Viewer)';
+        closeBtn.disabled = false;
+        openOfficeBtn.href = officeURL;
+        notesEl.textContent = 'If the preview fails, the file will download in your browser. Consider converting to PDF for inline embedding.';
+      } else {
+        activeInfo.textContent = doc.title + ' • Unsupported preview';
+        notesEl.textContent = 'File type not supported for inline preview. Use Open to download.';
+      }
+    }
+
+    function officeEmbedURL(absFileURL){
+      return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(absFileURL);
+    }
+
+    closeBtn.addEventListener('click', ()=>{
+      docFrame.src = '';
+      iframeWrap.style.display = 'none';
+      activeInfo.textContent = 'No document selected';
+      closeBtn.disabled = true;
+      notesEl.textContent = '';
+    });
+
+    // keyboard: Esc closes
+    document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape'){ closeBtn.click(); } });
+
+    // accessibility: expose list count
+    document.getElementById('docList').setAttribute('aria-label', 'Document list. ' + DOCUMENTS.length + ' items found.');
+  </script>
+</body>
+</html>
