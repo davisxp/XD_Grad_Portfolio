@@ -1,4 +1,4 @@
-# Xavier Davis — Finance Portfolio
+# Finance Portfolio:  Xavier Davis
 
 > A professional showcase of financial modeling, valuation, and deal-structuring capabilities in healthcare and life sciences.
 
