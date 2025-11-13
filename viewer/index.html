@@ -80,6 +80,9 @@
     .hidden{display:none}
     footer{border-top:1px solid var(--border); padding:12px 16px; color:var(--muted); font-size:12px}
     @media (max-width: 980px) { main{grid-template-columns:1fr} aside{border-left:none; padding-left:0} }
+
+    /* NEW: charts sizing */
+    #chartsOut canvas{width:100%; height:260px; display:block; margin:10px 0;}
   </style>
   <!-- Sheet parser -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -87,6 +90,8 @@
   <script src="https://cdn.jsdelivr.net/npm/hyperformula@3.0.1/dist/hyperformula.full.min.js"></script>
   <!-- Tiny unzipper to read styles.xml for real Excel colours/fonts/borders -->
   <script src="https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/index.js"></script>
+  <!-- NEW: Chart.js for chart rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body class="excel">
   <header>
@@ -129,6 +134,13 @@
           <b>Hyperlink</b><span>–</span>
         </div>
       </div>
+
+      <!-- NEW: Charts preview panel -->
+      <div class="panel" id="chartsPanel">
+        <h2>Charts</h2>
+        <div class="meta">Charts parsed from the workbook’s drawing parts. Supported: line, bar, scatter, pie.</div>
+        <div id="chartsOut"></div>
+      </div>
     </aside>
   </main>
 
@@ -170,11 +182,18 @@
     const copyBtn   = document.getElementById('copyLink');
     const dlLink    = document.getElementById('downloadLink');
 
+    /* NEW: charts DOM */
+    const chartsOut = document.getElementById('chartsOut');
+
     let currentWB = null, currentPath = null, currentWS = null, currentHTMLTable = null;
     let hf = null;  // HyperFormula instance
     const sheetOffsets = {};      // { [sheetName]: {r0, c0} }
     const date1904BySheet = {};   // { [sheetName]: boolean }
     let styleCtx = null;          // Excel styles from styles.xml (for current workbook)
+
+    /* NEW: charts context */
+    let chartsBySheet = {};       // { [sheetName]: [ {type, titleF?, titleText?, series:[{nameF?, nameV?, xRef?, yRef?, catRef?}]} ] }
+    let chartInstances = [];      // active Chart.js instances for cleanup
 
     // Populate dropdowns
     files.forEach(f => {
@@ -367,6 +386,145 @@
       }
     }
 
+    /* === NEW: Extract chart definitions from the XLSX === */
+    async function extractChartsFromXLSX(arrayBuffer){
+      try{
+        const bytes = new Uint8Array(arrayBuffer);
+        const zip = fflate.unzipSync(bytes);
+        const td = new TextDecoder('utf-8');
+        const parse = (xml) => (new DOMParser()).parseFromString(xml, 'application/xml');
+
+        const wbXml = zip['xl/workbook.xml'] ? td.decode(zip['xl/workbook.xml']) : null;
+        const relsXml = zip['xl/_rels/workbook.xml.rels'] ? td.decode(zip['xl/_rels/workbook.xml.rels']) : null;
+        if(!wbXml || !relsXml) return {};
+
+        // Map sheet name -> sheet xml path
+        const wdoc = parse(wbXml);
+        const sheets = Array.from(wdoc.getElementsByTagName('sheet')).map(s => ({
+          name: s.getAttribute('name'),
+          rid:  s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || s.getAttribute('r:id')
+        }));
+        const rdoc = parse(relsXml);
+        const rels = {};
+        Array.from(rdoc.getElementsByTagName('Relationship')).forEach(r=>{
+          rels[r.getAttribute('Id')] = r.getAttribute('Target');
+        });
+        const sheetPathByName = {};
+        sheets.forEach(s => {
+          const tgt = rels[s.rid];
+          if (tgt) sheetPathByName[s.name] = 'xl/' + tgt.replace(/^\//,'');
+        });
+
+        // Helper: localName query
+        const byLocal = (root, name) => Array.from(root.getElementsByTagName('*')).filter(n => n.localName === name);
+
+        const chartsBySheet = {};
+
+        for (const [sheetName, sheetPath] of Object.entries(sheetPathByName)){
+          const sheetRelsPath = 'xl/worksheets/_rels/' + sheetPath.split('/').pop() + '.rels';
+          const relEntry = zip[sheetRelsPath];
+          if(!relEntry) continue;
+          const sRelsDoc = parse(td.decode(relEntry));
+          const drawRel = Array.from(sRelsDoc.getElementsByTagName('Relationship'))
+            .find(r => /drawing/i.test(r.getAttribute('Type')||''));
+          if(!drawRel) continue;
+
+          const drawingPath = 'xl/' + drawRel.getAttribute('Target').replace(/^\//,'');
+          const drawingXmlEntry = zip[drawingPath];
+          if(!drawingXmlEntry) continue;
+          const drawingDoc = parse(td.decode(drawingXmlEntry));
+
+          // map drawing rels rId -> chart xml path
+          const drawingRelsPath = 'xl/drawings/_rels/' + drawingPath.split('/').pop() + '.rels';
+          const dRelEntry = zip[drawingRelsPath];
+          if(!dRelEntry) continue;
+          const dRelsDoc = parse(td.decode(dRelEntry));
+          const dMap = {};
+          Array.from(dRelsDoc.getElementsByTagName('Relationship')).forEach(r=>{
+            const id = r.getAttribute('Id');
+            const tgt = r.getAttribute('Target'); // e.g. ../charts/chart1.xml
+            dMap[id] = 'xl/' + tgt.replace(/^\.\.\//,'');
+          });
+
+          const chartElems = byLocal(drawingDoc, 'chart'); // <c:chart r:id="rIdX">
+          for(const cEl of chartElems){
+            const rid = cEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id') || cEl.getAttribute('r:id');
+            const chartPath = dMap[rid];
+            if(!chartPath || !zip[chartPath]) continue;
+
+            const cDoc = parse(td.decode(zip[chartPath]));
+            // Determine chart type (line, bar, scatter, area, pie)
+            const typeOrder = ['lineChart','barChart','scatterChart','areaChart','pieChart'];
+            const typeNode = typeOrder.map(t => byLocal(cDoc, t)[0]).find(Boolean);
+            if(!typeNode) continue;
+
+            let type = typeNode.localName;
+            if (type === 'lineChart') type = 'line';
+            else if (type === 'barChart') type = 'bar';
+            else if (type === 'scatterChart') type = 'scatter';
+            else if (type === 'areaChart') type = 'line';
+            else if (type === 'pieChart') type = 'pie';
+            else type = 'line';
+
+            // title (optional)
+            let titleF = null, titleText = null;
+            const titleNode = byLocal(cDoc, 'title')[0];
+            if(titleNode){
+              const strRef = byLocal(titleNode, 'strRef')[0];
+              const vNode = byLocal(titleNode, 'v')[0];
+              if (strRef){
+                const fNode = byLocal(strRef, 'f')[0];
+                if (fNode && fNode.textContent) titleF = fNode.textContent.trim();
+              } else if (vNode){
+                titleText = vNode.textContent.trim();
+              }
+            }
+
+            const serNodes = byLocal(typeNode, 'ser');
+            const series = [];
+            for (const sN of serNodes){
+              // Series name
+              let nameF = null, nameV = null;
+              const tx = byLocal(sN, 'tx')[0];
+              if(tx){
+                const strRef = byLocal(tx, 'strRef')[0];
+                const vNode = byLocal(tx, 'v')[0];
+                if (strRef){
+                  const f = byLocal(strRef, 'f')[0];
+                  if (f && f.textContent) nameF = f.textContent.trim();
+                } else if (vNode){
+                  nameV = vNode.textContent.trim();
+                }
+              }
+              // Ranges
+              const getRefF = (parentNames) => {
+                for(const nm of parentNames){
+                  const p = byLocal(sN, nm)[0];
+                  if(!p) continue;
+                  const numRef = byLocal(p, 'numRef')[0] || byLocal(p, 'strRef')[0];
+                  if(!numRef) continue;
+                  const f = byLocal(numRef, 'f')[0];
+                  if (f && f.textContent) return f.textContent.trim();
+                }
+                return null;
+              };
+              const catRef = getRefF(['cat','xVal']); // bar/line use cat, scatter uses xVal
+              const yRef   = getRefF(['val','yVal']); // bar/line use val, scatter uses yVal
+
+              series.push({ nameF, nameV, catRef, xRef: catRef, yRef });
+            }
+
+            if(!chartsBySheet[sheetName]) chartsBySheet[sheetName] = [];
+            chartsBySheet[sheetName].push({ type, titleF, titleText, series });
+          }
+        }
+
+        return chartsBySheet;
+      }catch(_){
+        return {};
+      }
+    }
+
     function applyExcelStyle(td, sheetName, addr){
       if (!styleCtx) return;
       const xfIdx = styleCtx.sheetCellXf[sheetName]?.[addr];
@@ -407,6 +565,9 @@
         out.innerHTML = '';
         sheetSel.innerHTML = '';
         styleCtx = null;
+        chartsBySheet = {};
+        destroyAllCharts();
+        chartsOut.innerHTML = '<div class="meta">Scanning for charts…</div>';
 
         const res = await fetch(path, { cache: 'no-store' });
         if(!res.ok) throw new Error(`Fetch failed (${res.status}) for ${path}`);
@@ -418,6 +579,9 @@
 
         // Extract real Excel styles/xf indices from the raw zip (current workbook only)
         styleCtx = await extractStylesFromXLSX(buf);
+
+        // NEW: Extract charts/drawings
+        chartsBySheet = await extractChartsFromXLSX(buf);
 
         // Populate sheets
         currentWB.SheetNames.forEach(s => {
@@ -520,6 +684,7 @@
           setScenarioInHF(scenarioSel.value);
 		  if (hf && hf.recompute) hf.recompute();
           renderSheet(currentWS);
+          renderChartsForActiveSheet(); /* NEW: refresh charts on scenario change */
           status('Scenario updated');
         } catch(e) {
           status('Scenario update failed: ' + e.message);
@@ -662,6 +827,9 @@
       // interactions (persistent)
       table.addEventListener('click', onCellClick);
       applyFilter();
+
+      /* NEW: render charts for this sheet */
+      renderChartsForActiveSheet();
     }
 
     function onCellClick(ev){
@@ -696,6 +864,144 @@
         if(!q){ row.classList.remove('hidden'); return; }
         const text = row.textContent.toLowerCase();
         row.classList.toggle('hidden', !text.includes(q));
+      });
+    }
+
+    /* === NEW: Chart helpers === */
+    function destroyAllCharts(){
+      chartInstances.forEach(ch => { try{ ch.destroy(); }catch{} });
+      chartInstances = [];
+    }
+
+    function parseSheetAndRange(a1){
+      if(!a1) return null;
+      // Handle quoted sheet names with spaces or special chars
+      const m = a1.match(/^(?:'([^']+)'|([^'!]+))!(\$?[A-Z]+\$?[0-9]+(?::\$?[A-Z]+\$?[0-9]+)?)$/);
+      if(!m) return null;
+      const sheet = (m[1] || m[2]);
+      const range = m[3].replace(/\$/g,'');
+      return { sheet, range };
+    }
+
+    function rangeToVector(vals2d){
+      // flatten either row or column into a 1D vector in reading order
+      if(!Array.isArray(vals2d) || !vals2d.length) return [];
+      if (vals2d.length === 1) return vals2d[0].slice();
+      if (vals2d[0].length === 1) return vals2d.map(r => r[0]);
+      // otherwise flatten row-major
+      return vals2d.flat();
+    }
+
+    function getRangeValues(sheetName, rangeA1){
+      if(!hf) return [];
+      const id = hf.getSheetId(sheetName);
+      if (id == null) return [];
+      const { r0, c0 } = sheetOffsets[sheetName] || { r0:0, c0:0 };
+      const r = XLSX.utils.decode_range(rangeA1);
+      const out = [];
+      for(let R=r.s.r; R<=r.e.r; ++R){
+        const row = [];
+        for(let C=r.s.c; C<=r.e.c; ++C){
+          let v = hf.getCellValue({ sheet:id, row: R - r0, col: C - c0 });
+          if (v && typeof v === 'object' && 'type' in v) v = null; // HF error -> null
+          row.push(v);
+        }
+        out.push(row);
+      }
+      return out;
+    }
+
+    function evalTitle(titleF, fallbackText){
+      if(titleF){
+        const pr = parseSheetAndRange(titleF);
+        if (pr){
+          const vals = getRangeValues(pr.sheet, pr.range);
+          const vec = rangeToVector(vals);
+          if (vec.length) return String(vec[0] ?? '');
+        }
+      }
+      return fallbackText || '';
+    }
+
+    function evalSeriesName(s){
+      if (s.nameF){
+        const pr = parseSheetAndRange(s.nameF);
+        if (pr){
+          const vals = getRangeValues(pr.sheet, pr.range);
+          const vec = rangeToVector(vals);
+          if (vec.length) return String(vec[0] ?? '');
+        }
+      }
+      if (s.nameV) return s.nameV;
+      return '';
+    }
+
+    function renderChartsForActiveSheet(){
+      const sheet = sheetSel.value;
+      destroyAllCharts();
+      chartsOut.innerHTML = '';
+
+      const defs = chartsBySheet[sheet] || [];
+      if (!defs.length){
+        chartsOut.innerHTML = '<div class="meta">No charts found on this sheet.</div>';
+        return;
+      }
+
+      defs.slice(0, 8).forEach((def, idx) => { // render up to 8 to be safe
+        const title = evalTitle(def.titleF, def.titleText);
+        const cnv = document.createElement('canvas');
+        cnv.setAttribute('aria-label', title || ('Chart '+(idx+1)));
+        chartsOut.appendChild(cnv);
+
+        if (def.type === 'pie'){
+          // merge all series into one dataset if multiple
+          const first = def.series[0] || {};
+          const catPr = parseSheetAndRange(first.catRef || first.xRef);
+          const yPr   = parseSheetAndRange(first.yRef);
+          const labels = catPr ? rangeToVector(getRangeValues(catPr.sheet, catPr.range)).map(x=>String(x ?? '')) : [];
+          const data   = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
+          const cfg = {
+            type: 'pie',
+            data: { labels, datasets: [{ label: evalSeriesName(first) || title || 'Series', data }] },
+            options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
+          };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+        } else if (def.type === 'scatter'){
+          const datasets = def.series.map(s => {
+            const xPr = parseSheetAndRange(s.xRef);
+            const yPr = parseSheetAndRange(s.yRef);
+            const xs = xPr ? rangeToVector(getRangeValues(xPr.sheet, xPr.range)).map(Number) : [];
+            const ys = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
+            const len = Math.min(xs.length, ys.length);
+            const data = Array.from({length: len}, (_,i)=>({x: xs[i], y: ys[i]}));
+            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data, showLine:false };
+          });
+          const cfg = {
+            type: 'scatter',
+            data: { datasets },
+            options: { responsive:true, scales:{ x:{ type:'linear' }, y:{ type:'linear' } }, plugins:{ title:{ display: !!title, text: title } } }
+          };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+        } else {
+          // line / bar
+          // labels taken from the first series categories or xRef
+          const first = def.series[0] || {};
+          const catPr = parseSheetAndRange(first.catRef || first.xRef);
+          const labels = catPr ? rangeToVector(getRangeValues(catPr.sheet, catPr.range)).map(v => String(v ?? '')) : [];
+
+          const datasets = def.series.map((s, i) => {
+            const yPr = parseSheetAndRange(s.yRef);
+            const ys = yPr ? rangeToVector(getRangeValues(yPr.sheet, yPr.range)).map(Number) : [];
+            return { label: evalSeriesName(s) || ('Series ' + (i+1)), data: ys };
+          });
+
+          const cfg = {
+            type: def.type,
+            data: { labels, datasets },
+            options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } }
+          };
+          chartInstances.push(new Chart(cnv.getContext('2d'), cfg));
+        }
       });
     }
 
