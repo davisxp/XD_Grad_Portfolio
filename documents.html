@@ -18,8 +18,14 @@
       --accent: #17664b;
       --panel-bg: #fff;
       --muted:#4a4a4a;
+
+      /* New sizing variables to make the page fill the viewport */
+      --nav-height: 64px;            /* approximate height of .top-nav */
+      --page-gutter: 28px;          /* top/bottom spacing */
+      --controls-height: 56px;      /* height reserved for controls/header area inside panel */
     }
     *{box-sizing:border-box}
+    html, body { height: 100%; }
     body{
       margin:0;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -27,6 +33,10 @@
       background:#fff;
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
+      /* ensure the body forms a full-height flex column so main can expand */
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
     }
 
     /* Top nav (same style as index) */
@@ -42,6 +52,8 @@
       align-items:center;
       justify-content:space-between;
       border-bottom:2px solid var(--navy);
+      height: var(--nav-height);
+      min-height: var(--nav-height);
     }
     .logo { font-weight:600; color:#fff; font-size:16px }
     .nav-links { display:inline-flex; gap:10px; align-items:center }
@@ -69,15 +81,24 @@
 
     /* Page shell */
     main{
+      /* constrain width but allow height to expand to fill viewport */
       max-width: var(--max-width);
-      margin: 28px auto;
-      padding: 0 20px 80px;
+      margin: 0 auto;
+      padding: 18px 20px;
+      width: 100%;
+      /* make main take remaining vertical space under the nav */
+      flex: 1 1 auto;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-height: calc(100vh - var(--nav-height) - (2 * var(--page-gutter)));
     }
     header.page-head {
       display:flex;
       align-items:center;
       gap:12px;
-      margin-bottom:18px;
+      margin-bottom:0;
     }
     header.page-head h1 { margin:0; font-size:20px; color:var(--navy) }
     .lead { color:var(--text-muted); margin-top:6px; font-size:14px }
@@ -88,14 +109,21 @@
       grid-template-columns:320px 1fr;
       gap:18px;
       align-items:start;
+      /* Make the grid expand to fill the available vertical space */
+      flex: 1 1 auto;
+      min-height: 0; /* allow children to shrink properly */
     }
     .panel {
       background:var(--panel-bg);
       border:1px solid var(--border);
       border-radius:10px;
       padding:12px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      min-height: 0;
     }
-    .doc-list { display:flex; flex-direction:column; gap:10px }
+    .doc-list { display:flex; flex-direction:column; gap:10px; overflow:auto; padding-right:4px; }
     .doc-item {
       display:flex;
       justify-content:space-between;
@@ -116,18 +144,25 @@
       display:flex;
       gap:8px;
       align-items:center;
-      margin-bottom:10px;
+      margin-bottom:0;
+      height: var(--controls-height);
+      min-height: var(--controls-height);
     }
     .spacer { flex:1 }
 
+    /* Make iframe-wrap flexible so it fills the remaining panel space */
     .iframe-wrap {
       border-radius:8px;
       overflow:hidden;
       border:1px solid var(--border);
       background:#fff;
       min-height:240px;
+      /* flex so it grows to fill panel space */
+      flex: 1 1 auto;
+      display:flex;
+      flex-direction:column;
     }
-    iframe { width:100%; height:640px; border:0; display:block; }
+    iframe { width:100%; height:100%; border:0; display:block; flex: 1 1 auto; }
 
     .small { font-size:13px; color:var(--muted) }
 
