@@ -86,6 +86,33 @@
     .btn.secondary:hover {
       background: rgba(255, 255, 255, 0.1);
     }
+    select {
+      appearance: none;
+      background-color: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 9px 36px 9px 12px;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.2;
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8"><path fill="%23001f3f" d="M1.41 0L6 4.58 10.59 0 12 1.41 6 7.41 0 1.41z"/></svg>');
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 12px 8px;
+    }
+    select:hover {
+      border-color: #bbb;
+    }
+    select:focus {
+      outline: none;
+      border-color: var(--navy);
+      box-shadow: 0 0 0 2px rgba(0, 31, 63, 0.12);
+    }
+    select option {
+      background: #fff;
+      color: var(--text);
+    }
     main {
       flex: 1;
       max-width: var(--max-width);
@@ -265,10 +292,40 @@
       color: #c00;
       font-weight: 500;
     }
+    @media (max-width: 960px) {
+      .top-nav {
+        flex-wrap: wrap;
+        row-gap: 12px;
+        padding: 14px 20px;
+      }
+      .nav-links {
+        width: 100%;
+        justify-content: flex-start;
+      }
+      main {
+        padding: 40px 20px;
+      }
+      .feature-grid {
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+    }
     @media (max-width: 720px) {
       .top-nav {
         flex-direction: column;
         align-items: flex-start;
+        row-gap: 10px;
+      }
+      .nav-links {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .nav-links .btn {
+        width: 100%;
+        text-align: center;
+      }
+      .btn {
+        width: 100%;
       }
       .hero h1 {
         font-size: 28px;
@@ -279,12 +336,14 @@
       .hero-cta {
         flex-direction: column;
       }
-      .hero-cta .btn {
-        width: 100%;
-        text-align: center;
-      }
       main {
         padding: 32px 16px;
+      }
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+      .readme-card {
+        padding: 24px;
       }
     }
   </style>
