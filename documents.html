@@ -14,12 +14,18 @@
       --text-muted: #666;
       --border: #ddd;
       --bg-light: #f8f9fa;
-      --max-width: 1000px;
       --accent: #17664b;
       --panel-bg: #fff;
       --muted:#4a4a4a;
+
+      /* sizing */
+      --nav-height: 64px;            /* height of top nav */
+      --controls-height: 64px;       /* controls/header inside the viewer panel */
+      --left-col: 360px;             /* width of left document list */
+      --gutter: 18px;                /* gap between columns */
     }
     *{box-sizing:border-box}
+    html, body { height: 100%; margin: 0; }
     body{
       margin:0;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -27,6 +33,11 @@
       background:#fff;
       -webkit-font-smoothing:antialiased;
       -moz-osx-font-smoothing:grayscale;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      /* allow page to use full width */
+      width:100%;
     }
 
     /* Top nav (same style as index) */
@@ -42,6 +53,8 @@
       align-items:center;
       justify-content:space-between;
       border-bottom:2px solid var(--navy);
+      height: var(--nav-height);
+      min-height: var(--nav-height);
     }
     .logo { font-weight:600; color:#fff; font-size:16px }
     .nav-links { display:inline-flex; gap:10px; align-items:center }
@@ -67,35 +80,51 @@
       background: transparent;
     }
 
-    /* Page shell */
+    /* Page shell - use full width (no max-width) and occupy remaining height */
     main{
-      max-width: var(--max-width);
-      margin: 28px auto;
-      padding: 0 20px 80px;
+      margin: 0 auto;
+      padding: 12px;
+      width: 100%;
+      flex: 1 1 auto;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: calc(100vh - var(--nav-height));
     }
     header.page-head {
       display:flex;
       align-items:center;
       gap:12px;
-      margin-bottom:18px;
+      margin-bottom:0;
+      padding: 6px 0;
     }
     header.page-head h1 { margin:0; font-size:20px; color:var(--navy) }
     .lead { color:var(--text-muted); margin-top:6px; font-size:14px }
 
-    /* Documents layout (left list, right viewer) */
+    /* Documents layout: left list, right viewer. Make it fill available vertical space */
     .grid {
       display:grid;
-      grid-template-columns:320px 1fr;
-      gap:18px;
+      grid-template-columns: var(--left-col) 1fr;
+      gap: var(--gutter);
       align-items:start;
+      flex: 1 1 auto;
+      min-height: 0; /* important for children to be able to scroll */
+      height: 100%;
     }
     .panel {
       background:var(--panel-bg);
       border:1px solid var(--border);
       border-radius:10px;
       padding:12px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      min-height: 0;
     }
-    .doc-list { display:flex; flex-direction:column; gap:10px }
+
+    /* left column */
+    .doc-list { display:flex; flex-direction:column; gap:10px; overflow:auto; padding-right:6px; min-height:0; }
     .doc-item {
       display:flex;
       justify-content:space-between;
@@ -112,29 +141,41 @@
     .doc-meta { color:var(--muted); font-size:13px }
     .doc-title { font-weight:600; color:var(--navy) }
 
+    /* right column - viewer */
     .viewer-controls {
       display:flex;
       gap:8px;
       align-items:center;
-      margin-bottom:10px;
+      margin-bottom:0;
+      height: var(--controls-height);
+      min-height: var(--controls-height);
     }
     .spacer { flex:1 }
 
+    /* Make iframe-wrap fill the rest of its panel and the entire right column */
     .iframe-wrap {
       border-radius:8px;
       overflow:hidden;
       border:1px solid var(--border);
       background:#fff;
-      min-height:240px;
+      flex: 1 1 auto;
+      display:flex;
+      flex-direction:column;
+      min-height: 0;
+      /* ensure the iframe-wrap uses all remaining height */
+      height: auto;
     }
-    iframe { width:100%; height:640px; border:0; display:block; }
+    /* iframe must stretch to fill container */
+    iframe { width:100%; height:100%; border:0; display:block; flex:1 1 auto; }
 
     .small { font-size:13px; color:var(--muted) }
 
-    /* responsive */
+    /* responsive: on small screens, left column collapses to top and viewer below */
     @media (max-width:980px){
-      .grid { grid-template-columns: 1fr; }
-      iframe { height:520px; }
+      .grid { grid-template-columns: 1fr; grid-auto-rows: auto 1fr; }
+      .doc-list { flex-direction:row; overflow:auto; gap:8px; padding-bottom:8px; }
+      .doc-item { min-width:220px; flex: 0 0 auto; }
+      .viewer-controls { height: 56px; min-height:56px; }
     }
   </style>
 </head>
@@ -168,14 +209,15 @@
     <div class="grid" role="main">
       <aside class="panel" aria-labelledby="availableDocs">
         <h2 id="availableDocs" style="margin:0 0 8px 0">Available documents</h2>
-        <div class="doc-list" id="docList">
+        <div class="doc-list" id="docList" tabindex="0">
           <!-- populated by JS -->
         </div>
         <div class="small" style="margin-top:10px">
+          Tip: PDFs embed inline in most browsers. DOCX are previewed via Microsoft Office Viewer; convert to PDF for guaranteed inline fidelity.
         </div>
       </aside>
 
-      <section class="panel" aria-live="polite">
+      <section class="panel" aria-live="polite" style="min-height:0; display:flex; flex-direction:column;">
         <div class="viewer-controls">
           <div id="activeInfo" class="doc-meta">No document selected</div>
           <div class="spacer"></div>
@@ -265,7 +307,7 @@
         activeInfo.textContent = doc.title + ' • Preview';
         closeBtn.disabled = false;
         openOfficeBtn.href = officeEmbedURL(new URL(doc.path, location.href).href) + '&wdDownloadButton=TRUE';
-        // scroll into view on small screens
+        // ensure viewer is in view on small screens
         iframeWrap.scrollIntoView({behavior:'smooth', block:'center'});
       } else if(doc.type === 'docx'){
         // Prefer Office Viewer inline for docx; if blocked, user can open
