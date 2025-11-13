@@ -42,114 +42,50 @@ let sheetOffsets = {};     // { [sheetName]: { r0, c0 } }
 let date1904BySheet = {};  // { [sheetName]: boolean }
 let currentHTMLTable = null;
 
-/* --------- Helpers --------- */
-function status(msg){ if (statusEl) statusEl.textContent = msg || ""; }
-function htmlEscape(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-
-function parseCellAddress(a1){
-  try { return XLSX.utils.decode_cell(a1); } catch { return null; }
-}
-
-/* use window.deps prepared by index.html */
-const deps = window.deps || {};
-if (!deps || !deps.loadWorkbook) {
-  console.warn("[viewer] deps not available; ensure index.html script block ran before viewer.js");
-}
+/* NEW: raw workbook bytes (for chart scan) + chart state */
+let wbBuf = null;
+let chartsBySheet = {};    // { [sheetName]: ChartDef[] }
+let chartInstances = [];   // live Chart.js instances for cleanup
 
 /* --------- Init UI --------- */
-(function initUI(){
-  // files dropdown
-  fileSel.innerHTML = "";
-  files.forEach(f=>{
-    const o = document.createElement("option");
-    o.value = f.path; o.textContent = f.label;
-    fileSel.appendChild(o);
+(function bootstrap() {
+  // Files dropdown
+  files.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.path; opt.textContent = f.label;
+    fileSel.appendChild(opt);
   });
-
-  // scenario dropdown
-  scenarioSel.innerHTML = "";
-  SCENARIO_OPTS.forEach(s=>{
-    const o = document.createElement("option");
-    o.value = s; o.textContent = s;
-    scenarioSel.appendChild(o);
-  });
-
   fileSel.value = files[0].path;
+
+  // Scenario dropdown
+  scenarioSel.innerHTML = SCENARIO_OPTS.map(v => `<option value="${v}">${v}</option>`).join("");
+
+  // Wire controls
+  fileSel.addEventListener("change", () => loadWorkbook(fileSel.value));
+  sheetSel.addEventListener("change", () => {
+    if (!currentWB) return;
+    const name = sheetSel.value;
+    currentWS = currentWB.Sheets[name];
+    renderActiveSheet();
+    renderChartsForActiveSheet();            // NEW
+    syncLink();
+  });
+  showForm.addEventListener("change", () => { renderActiveSheet(); renderChartsForActiveSheet(); }); // NEW
+  filterInp.addEventListener("input", applyFilter);
+  copyBtn.addEventListener("click", copyDeepLink);
+
+  // Scenarios
+  scenarioSel.addEventListener("change", onScenarioChange);
+
+  // Ensure a Charts panel exists (no HTML change required)
+  ensureChartsPanel();
+
+  // Deep-link boot
+  initFromQueryAndLoad();
 })();
 
-/* ----- Rendering the grid ----- */
-function renderActiveSheet(){
-  const wsname = sheetSel.value;
-  const ws = currentWB.Sheets[wsname];
-  if (!ws) return;
-
-  const { table } = deps.renderSheet({ ws, wsname, wb: currentWB, styleCtx, showFormula: showForm.checked, filterText: filterInp.value || "" });
-  currentHTMLTable = table;
-
-  // Wire inspector
-  table.addEventListener("click", (e)=>{
-    const td = e.target.closest("td[data-a1]");
-    if (!td) return;
-    const addr = td.getAttribute("data-a1");
-    showCellInfo(wsname, addr);
-  }, { passive:true });
-}
-
-function showCellInfo(sheet, a1){
-  if (!hf || !cellInfo) return;
-  const id = hf.getSheetId(sheet);
-  if (id == null) return;
-
-  const { r, c } = XLSX.utils.decode_cell(a1);
-  const { r0, c0 } = sheetOffsets[sheet] || { r0:0, c0:0 };
-  const v = hf.getCellValue({ sheet:id, row:r - r0, col:c - c0 });
-  const f = hf.getCellFormula({ sheet:id, row:r - r0, col:c - c0 });
-
-  cellInfo.innerHTML = `
-    <div class="kv"><div>Cell</div><div>${htmlEscape(sheet)}!${htmlEscape(a1)}</div></div>
-    <div class="kv"><div>Value</div><div>${htmlEscape(String(v))}</div></div>
-    <div class="kv"><div>Formula</div><div><code>${htmlEscape(f || "")}</code></div></div>
-  `;
-}
-
-/* ----- URL sync ----- */
-function syncLink(){
-  const url = new URL(location.href);
-  url.searchParams.set("file", fileSel.value);
-  url.searchParams.set("sheet", sheetSel.value);
-  url.searchParams.set("sc", scenarioSel.value);
-  history.replaceState(null, "", url.toString());
-}
-
-/* ----- Events ----- */
-fileSel.addEventListener("change", async ()=>{
-  await openPath(fileSel.value);
-});
-sheetSel.addEventListener("change", ()=>{
-  renderActiveSheet();
-  renderChartsForActiveSheet();
-  syncLink();
-});
-scenarioSel.addEventListener("change", ()=>{
-  applyScenarioToHF(scenarioSel.value);
-  renderActiveSheet();
-  renderChartsForActiveSheet();
-});
-showForm.addEventListener("change", ()=>{
-  renderActiveSheet();
-});
-filterInp.addEventListener("input", ()=>{
-  renderActiveSheet();
-});
-copyBtn.addEventListener("click", ()=>{
-  navigator.clipboard.writeText(location.href).catch(()=>{});
-});
-dlLink.addEventListener("click", (e)=>{
-  dlLink.href = fileSel.value;
-});
-
-/* ----- HF + Scenario wiring ----- */
-async function openPath(path){
+/* --------- Orchestration --------- */
+async function loadWorkbook(path) {
   try {
     currentPath = path;
     status("Loading workbook…");
@@ -199,19 +135,78 @@ async function openPath(path){
     status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
     syncLink();
   } catch (e) {
-    out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive on most servers).</div>`;
-    status("");
+    out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
+    setChartsStatus("No charts");
+    status("Error loading workbook");
   }
 }
 
-function applyScenarioToHF(scenarioName){
-  // write scenario into target cells
-  SCENARIOS.forEach(({sheet, targets})=>{
+function renderActiveSheet() {
+  if (!currentWS) return;
+  const res = deps.renderSheet({
+    container: out,
+    ws: currentWS,
+    sheetName: sheetSel.value,
+    hf,
+    styleCtx,
+    showFormulae: !!showForm.checked,
+    sheetOffsets,
+    date1904BySheet,
+    MAX_R,
+    MAX_C
+  });
+  currentHTMLTable = res.table;
+
+  // Cell inspector
+  if (currentHTMLTable) {
+    currentHTMLTable.addEventListener("click", onCellClick);
+  }
+  applyFilter();
+}
+
+function onCellClick(ev){
+  const td = ev.target.closest("td");
+  if(!td || !td.dataset.address) return;
+  const addr = td.dataset.address;
+  const cell = currentWS[addr] || {};
+  const fmt  = XLSX.utils.format_cell(cell);
+  const info = {
+    Address: addr,
+    Value: fmt || "",
+    Raw: (cell.v!==undefined ? String(cell.v) : ""),
+    Formula: (cell.f ? "=" + cell.f : ""),
+    Type: cell.t || "",
+    Format: cell.z || "",
+    Hyperlink: (cell.l && (cell.l.Target || cell.l.target)) ? (cell.l.Target || cell.l.target) : ""
+  };
+  cellInfo.innerHTML = "";
+  Object.entries(info).forEach(([k,v])=>{
+    const b = document.createElement("b"); b.textContent = k;
+    const s = document.createElement("span"); s.textContent = v || "–";
+    cellInfo.appendChild(b); cellInfo.appendChild(s);
+  });
+}
+
+/* --------- Scenario helpers --------- */
+function onScenarioChange(){
+  if (!hf) return;
+  try {
+    setScenarioInHF(scenarioSel.value);
+    if (hf.recompute) hf.recompute();
+    renderActiveSheet();
+    renderChartsForActiveSheet();        // NEW
+    status("Scenario updated");
+  } catch (e) {
+    status("Scenario update failed: " + e.message);
+  }
+}
+function setScenarioInHF(value){
+  SCENARIOS.forEach(({sheet, targets}) => {
     const id = hf.getSheetId(sheet);
-    const { r0, c0 } = sheetOffsets[sheet] || { r0:0, c0:0 };
+    const { r0, c0 } = sheetOffsets[sheet] || { r0: 0, c0: 0 };
     targets.forEach(addr => {
       const { r, c } = XLSX.utils.decode_cell(addr);
-      hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[scenarioName]]);
+      hf.setCellContents({ sheet: id, row: r - r0, col: c - c0 }, [[value]]);
     });
   });
 }
@@ -237,25 +232,84 @@ function initScenarioFromHF(){
     const qSc = params.get("sc");
     if (qSc && SCENARIO_OPTS.includes(qSc)) {
       scenarioSel.value = qSc;
-      applyScenarioToHF(qSc);
+      setScenarioInHF(qSc);
     }
-  } catch {}
+  } catch(_) {}
 }
 
-/* ===================== CHARTS ===================== */
+/* --------- Utilities --------- */
+function applyFilter(){
+  if(!currentHTMLTable) return;
+  const q = (filterInp.value||"").toLowerCase();
+  const rows = currentHTMLTable.querySelectorAll("tbody tr");
+  rows.forEach(row=>{
+    if(!q){ row.classList.remove("hidden"); return; }
+    const text = row.textContent.toLowerCase();
+    row.classList.toggle("hidden", !text.includes(q));
+  });
+}
+function copyDeepLink(){
+  const short = (currentPath||"").split("/").pop();
+  const url = new URL(location.href);
+  url.searchParams.set("file", short);
+  url.searchParams.set("sheet", sheetSel.value);
+  url.searchParams.set("f", showForm.checked ? "1":"0");
+  url.searchParams.set("sc", scenarioSel.value);
+  navigator.clipboard.writeText(url.toString()).then(() => {
+    status("Link copied");
+  }).catch(() => status("Could not copy link"));
+}
+function syncLink(){
+  dlLink.href = currentPath;
+  dlLink.textContent = "Download " + (files.find(f=>f.path===currentPath)?.label || "workbook");
+}
+function status(t){ statusEl.textContent = t; }
 
-let chartsBySheet = {};
-let wbBuf = null;
-let chartInstances = [];
+function initFromQueryAndLoad(){
+  const params = new URLSearchParams(location.search);
+  const qFile  = params.get("file");
+  const qSheet = params.get("sheet");
+  const qF     = params.get("f");
+  const qSc    = params.get("sc");
+  if(qF === "1") showForm.checked = true;
+  if (qSc && SCENARIO_OPTS.includes(qSc)) scenarioSel.value = qSc;
 
-function ensureChartsHost(){
-  const wrap = document.getElementById("sheetWrap");
-  if (!document.getElementById("chartsOut")){
-    const div = document.createElement("div");
-    div.id = "chartsOut";
-    div.className = "charts-grid";
-    wrap.appendChild(div);
+  if(qFile){
+    const match = files.find(f => f.path.endsWith("/"+qFile) || f.label === qFile);
+    if(match) fileSel.value = match.path;
   }
+  loadWorkbook(fileSel.value).then(()=>{
+    if(qSheet && currentWB.SheetNames.includes(qSheet)){
+      sheetSel.value = qSheet;
+      currentWS = currentWB.Sheets[qSheet];
+      renderActiveSheet();
+      renderChartsForActiveSheet();  // NEW
+    }
+  });
+}
+
+/* ===================== CHARTS (NEW) ===================== */
+
+/* Panel plumbing */
+function ensureChartsPanel(){
+  let panel = document.getElementById("chartsPanel");
+  if (panel) return;
+  const aside = document.querySelector("aside");
+  if (!aside) return;
+  panel = document.createElement("div");
+  panel.className = "panel";
+  panel.id = "chartsPanel";
+  const h2 = document.createElement("h2");
+  h2.textContent = "Charts";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = "Charts parsed from the workbook.";
+  const out = document.createElement("div");
+  out.id = "chartsOut";
+  panel.appendChild(h2); panel.appendChild(meta); panel.appendChild(out);
+  aside.appendChild(panel);
+
+  // quick inline sizing so we don't need CSS edits
   const css = document.createElement("style");
   css.textContent = "#chartsOut canvas{width:100%;height:260px;display:block;margin:10px 0}";
   document.head.appendChild(css);
@@ -275,8 +329,7 @@ function loadChartLibsOnce(){
 
   function loadScript(src){
     return new Promise((res, rej)=>{
-      const s = document.createElement("script"); s.src = src; s.async = true;
-      s.onload = res; s.onerror = () => rej(new Error("Failed to load " + src));
+      const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Failed to load " + src));
       document.head.appendChild(s);
     });
   }
@@ -288,21 +341,66 @@ function loadChartLibsOnce(){
     try{
       pluginModule = await import("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.esm.js");
     }catch(e){
-      // optional
+      console.warn("[charts] Failed to import financial plugin via ESM:", e);
     }
-    if (pluginModule && pluginModule.CandlestickController) {
-      Chart.register(pluginModule.CandlestickController, pluginModule.OHLCController, pluginModule.CandlestickElement, pluginModule.OHLCElement);
+
+    if (window.Chart && window.Chart.register) {
+      const registrables = [];
+
+      if (pluginModule && typeof pluginModule === "object") {
+        Object.values(pluginModule).forEach(obj => {
+          if (obj && (obj.id || obj.prototype?.id)) registrables.push(obj);
+        });
+      }
+
+      // Fallback: if module failed but global auto-registered, nothing to do.
+      if (!registrables.length && window.Chart.registry?.getController("ohlc")) {
+        console.info("[charts] Financial plugin already registered (ohlc controller present).");
+        return;
+      }
+
+      if (registrables.length) {
+        const seen = new Set();
+        const unique = registrables.filter(obj => {
+          const key = obj.id || obj.prototype?.id || obj.name || String(obj);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        try{
+          window.Chart.register(...unique);
+          console.info("[charts] Registered financial plugin controllers:", unique.map(o => o.id || o.name || "unknown"));
+        }catch(e){
+          console.warn("[charts] Failed to register financial plugin controllers:", e);
+        }
+      } else {
+        console.warn("[charts] Financial plugin not available; stock charts will fall back.");
+      }
     }
   })();
   return chartLibPromise;
 }
 
-const chartTypeMap = {
-  barChart: "bar",
-  bar3DChart: "bar",
+/* Helpers shared by extractor and renderer */
+const tdDecoder = new TextDecoder("utf-8");
+const byLocal = (root, name) => Array.from(root.getElementsByTagName("*")).filter(n => n.localName === name);
+const CHART_TYPE_ORDER = [
+  "lineChart","line3DChart","barChart","bar3DChart","columnChart","column3DChart",
+  "areaChart","area3DChart","scatterChart","bubbleChart","pieChart","pie3DChart",
+  "doughnutChart","radarChart","histogramChart","stockChart","waterfallChart",
+  "funnelChart","boxWhiskerChart","sunburstChart","treemapChart","surfaceChart",
+  "surface3DChart","wireframeSurfaceChart","wireframeSurface3DChart","paretoChart",
+  "comboChart","ofPieChart"
+];
+const CHART_TYPE_FALLBACK = {
   lineChart: "line",
   line3DChart: "line",
+  barChart: "bar",
+  bar3DChart: "bar",
+  columnChart: "bar",
+  column3DChart: "bar",
   areaChart: "area",
+  area3DChart: "area",
   scatterChart: "scatter",
   bubbleChart: "bubble",
   pieChart: "pie",
@@ -360,46 +458,21 @@ function normalisePath(base, target){
   return stack.join("/").toLowerCase();
 }
 
-/* Extract charts from XLSX ArrayBuffer */
-const FFLATE_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.1/umd/fflate.min.js";
-let fflateReady = null;
-async function ensureFflateReady(){
-  if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") return globalThis.fflate;
-  if (typeof globalThis.ensureFflate === "function") {
-    try {
-      const lib = await globalThis.ensureFflate();
-      if (lib && typeof lib.unzipSync === "function") return lib;
-    } catch(_) {}
-  }
-  // ESM fallback for environments where dynamic <script> is blocked by CSP
-  try {
-    const mod = await import("https://cdn.jsdelivr.net/npm/fflate@0.8.1/esm/browser.js");
-    if (mod && typeof mod.unzipSync === "function") {
-      globalThis.fflate = mod;
-      return mod;
-    }
-  } catch (_) {}
-  if (fflateReady) return fflateReady;
-  fflateReady = new Promise((resolve, reject)=>{
-    const script = document.createElement("script");
-    script.src = FFLATE_URL;
-    script.async = true;
-    script.onload = () => {
-      if (globalThis.fflate && typeof globalThis.fflate.unzipSync === "function") resolve(globalThis.fflate);
-      else reject(new Error("fflate failed to initialise"));
-    };
-    script.onerror = () => reject(new Error("Unable to load fflate library"));
-    document.head.appendChild(script);
-  }).catch(err => {
-    fflateReady = null;
-    throw err;
-  });
-  return fflateReady;
+function excelSerialToDate(serial, use1904){
+  if (serial == null || isNaN(serial)) return null;
+  let s = Number(serial);
+  if (use1904) s += 1462;
+  const epoch = Date.UTC(1899, 11, 30); // Excel 1900 epoch with leap bug
+  return new Date(epoch + s * 86400000);
 }
 
+/* Extract charts from XLSX ArrayBuffer */
 async function extractChartsFromXLSX(arrayBuffer){
   try{
-    const fflateLib = await ensureFflateReady();
+    const fflateLib = globalThis.fflate;
+    if (!fflateLib || typeof fflateLib.unzipSync !== "function") {
+      throw new Error("fflate is not defined (ensure the UMD script loads before viewer.js)");
+    }
     const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
     // case-insensitive view over zip entries
     const zip = {};
@@ -408,7 +481,6 @@ async function extractChartsFromXLSX(arrayBuffer){
     const wbXml = zip["xl/workbook.xml"]; const relsXml = zip["xl/_rels/workbook.xml.rels"];
     if(!wbXml || !relsXml){ setChartsStatus("No charts"); return {}; }
 
-    const tdDecoder = new TextDecoder("utf-8");
     const parse = (u8) => (new DOMParser()).parseFromString(tdDecoder.decode(u8), "application/xml");
     const wdoc = parse(wbXml);
     const rdoc = parse(relsXml);
@@ -429,16 +501,6 @@ async function extractChartsFromXLSX(arrayBuffer){
       return { name: s.name, path, kind };
     });
 
-    function byLocal(doc, local){
-      return Array.from(doc.getElementsByTagNameNS("*", local)).concat(Array.from(doc.getElementsByTagName(local)));
-    }
-    function firstDescendantWithLocal(node, locals){
-      for (const l of locals){
-        const el = node.querySelector(`*:is(${l}, *|${l})`);
-        if (el) return el;
-      }
-      return null;
-    }
     function collectPoints(node){
       if (!node) return null;
       const pts = [];
@@ -449,274 +511,245 @@ async function extractChartsFromXLSX(arrayBuffer){
           const members = byLocal(lvl, "pt");
           members.forEach(member=>{
             const idx = parseInt(member.getAttribute("idx") ?? `${buckets.length}`, 10);
-            buckets[idx] = buckets[idx] || new Array(depth+1).fill("");
-            const txt = member.textContent || "";
-            buckets[idx][depth] = txt;
+            const valAttr = member.getAttribute("val");
+            const vNode = byLocal(member, "v")[0];
+            const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : member.textContent);
+            if (!buckets[idx]) buckets[idx] = [];
+            buckets[idx][depth] = text;
           });
         });
-        return buckets.map(arr => arr.join(" / "));
-      } else {
-        byLocal(node, "pt").forEach(pt=>{
-          const idx = parseInt(pt.getAttribute("idx") ?? `${pts.length}`, 10);
-          pts[idx] = pt.textContent || "";
-        });
-        return pts.filter(v=>v!==undefined);
+        return buckets.map(path => (path || []).filter(Boolean).join(" / "));
       }
+
+      const pointNodes = byLocal(node, "pt");
+      pointNodes.forEach(pt=>{
+        const idxAttr = pt.getAttribute("idx");
+        const idx = idxAttr != null ? parseInt(idxAttr, 10) : pts.length;
+        const valAttr = pt.getAttribute("val");
+        const vNode = byLocal(pt, "v")[0];
+        const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : pt.textContent);
+        pts[idx] = text;
+      });
+      if (pts.length) return pts;
+
+      const nary = byLocal(node, "ptValue");
+      if (nary.length){
+        nary.forEach((pt, i)=>{
+          const idxAttr = pt.getAttribute("idx");
+          const idx = idxAttr != null ? parseInt(idxAttr, 10) : i;
+          pts[idx] = pt.textContent;
+        });
+      }
+      return pts.length ? pts : null;
     }
-    function readXY(refNode){
-      if (!refNode) return { refF:null, data:null };
-      const fNode = firstDescendantWithLocal(refNode, ["f"]);
-      if (fNode && fNode.textContent) return { refF: fNode.textContent.trim(), data: null };
-      const data = collectPoints(refNode);
-      return { refF:null, data };
+
+    function firstDescendantWithLocal(node, localNames){
+      if (!node) return null;
+      const wanted = Array.isArray(localNames) ? localNames : [localNames];
+      const all = node.getElementsByTagName("*");
+      for (let i=0;i<all.length;i++){
+        const el = all[i];
+        if (wanted.includes(el.localName)) return el;
+      }
+      return null;
     }
+
+    function pickRefOrData(seriesNode, candidates){
+      let refF = null, data = null;
+      for (const candidate of candidates){
+        const containers = byLocal(seriesNode, candidate);
+        for (const container of containers){
+          const refNode = firstDescendantWithLocal(container, ["numRef","strRef","numData","strData","multiLvlStrRef"]);
+          if (refNode && !refF){
+            const fNode = firstDescendantWithLocal(refNode, "f");
+            if (fNode && fNode.textContent) refF = fNode.textContent.trim();
+          }
+          if (!data){
+            data = collectPoints(refNode) || collectPoints(container);
+          }
+          if (refF || data) break;
+        }
+        if (refF || data) break;
+      }
+      return { refF, data };
+    }
+
     function readSeriesName(txNode){
       if (!txNode) return { nameF:null, nameV:null };
       const ref = firstDescendantWithLocal(txNode, ["strRef","strData"]);
       if (ref){
-        const fNode = firstDescendantWithLocal(ref, ["f"]);
+        const fNode = firstDescendantWithLocal(ref, "f");
         if (fNode && fNode.textContent) return { nameF: fNode.textContent.trim(), nameV: null };
         const data = collectPoints(ref);
-        if (data && data.length) return { nameF:null, nameV:String(data[0] ?? "") };
+        if (data && data.length) return { nameF: null, nameV: String(data[0] ?? "") };
       }
       const vNode = firstDescendantWithLocal(txNode, ["v","t","r"]);
       if (vNode && vNode.textContent) return { nameF:null, nameV: vNode.textContent.trim() };
       const text = txNode.textContent?.trim();
       return text ? { nameF:null, nameV:text } : { nameF:null, nameV:null };
     }
+
     function extractTitle(doc){
       const titleNode = byLocal(doc, "title")[0];
       if (!titleNode) return { titleF:null, titleText:null };
       const ref = firstDescendantWithLocal(titleNode, ["strRef","strData"]);
       if (ref){
-        const fNode = firstDescendantWithLocal(ref, ["f"]);
+        const fNode = firstDescendantWithLocal(ref, "f");
         if (fNode && fNode.textContent) return { titleF: fNode.textContent.trim(), titleText: null };
         const data = collectPoints(ref);
         if (data && data.length) return { titleF:null, titleText:String(data[0] ?? "") };
       }
       const vNode = firstDescendantWithLocal(titleNode, ["v","t"]);
       if (vNode && vNode.textContent) return { titleF:null, titleText: vNode.textContent.trim() };
-      return { titleF:null, titleText:null };
+      const text = titleNode.textContent?.trim();
+      return text ? { titleF:null, titleText:text } : { titleF:null, titleText:null };
     }
 
-    const chartsBySheetLocal = {};
+    function parseClassicChart(doc){
+      const typeNode = CHART_TYPE_ORDER.map(t => byLocal(doc, t)[0]).find(Boolean);
+      if (!typeNode) return null;
+      const mappedType = CHART_TYPE_FALLBACK[typeNode.localName] || "line";
+      const { titleF, titleText } = extractTitle(doc);
+      const serNodes = byLocal(typeNode, "ser").concat(byLocal(typeNode, "series"));
+      const series = serNodes.map(sN => {
+        const { nameF, nameV } = readSeriesName(byLocal(sN, "tx")[0]);
+        const cat = pickRefOrData(sN, ["cat","category","xVal","categories"]);
+        const y   = pickRefOrData(sN, ["val","yVal","values"]);
+        const z   = pickRefOrData(sN, ["bubbleSize","zVal","size","sizes"]);
+        return {
+          nameF,
+          nameV,
+          catRef: cat.refF || null,
+          catData: cat.data || null,
+          xRef: cat.refF || null,
+          xData: cat.data || null,
+          yRef: y.refF || null,
+          yData: y.data || null,
+          zRef: z.refF || null,
+          zData: z.data || null
+        };
+      });
+      return { type: mappedType, titleF, titleText, series };
+    }
 
-    for (const { name: sheetName, path: sheetPath, kind } of meta){
-      if (kind !== "worksheet" && kind !== "chartsheet") continue;
+    function parseChartPart(u8){
+      const doc = parse(u8);
+      const classic = parseClassicChart(doc);
+      if (classic) return classic;
+      return null;
+    }
 
-      // read drawing rels from the sheet rels
-      const relsPath = sheetPath.replace(/(^xl\/)(worksheets|chartsheets)\//, "$1$2/_rels/").replace(/\.xml$/i, ".xml.rels");
-      const relsXml2 = zip[relsPath];
-      const rels = {};
-      if (relsXml2){
-        const rdoc2 = parse(relsXml2);
-        Array.from(rdoc2.getElementsByTagName("Relationship")).forEach(r=>{
-          rels[r.getAttribute("Id")] = r.getAttribute("Target");
-        });
-      }
-
-      const drawingTargets = Object.values(rels).filter(t => /drawing/i.test(t));
-      const defs = [];
-
-      for (const drawT of drawingTargets){
-        const drawPath = normalisePath(sheetPath, drawT);
-        const drawingXml = zip[drawPath];
-        if (!drawingXml) continue;
-        const ddoc = parse(drawingXml);
-
-        // map drawing rId -> chart path
-        const dRelsPath = `xl/drawings/_rels/${drawPath.split("/").pop()}.rels`;
-        const dRelsXml = zip[dRelsPath];
-        const dRels = {};
-        if (dRelsXml){
-          const ddoc2 = parse(dRelsXml);
-          Array.from(ddoc2.getElementsByTagName("Relationship")).forEach(r=>{
-            const relTarget = r.getAttribute("Target");
-            const relPath = normalisePath(drawPath, relTarget);
-            if (relPath) dRels[r.getAttribute("Id")] = relPath;
-          });
-        }
-
-        const chartElems = ddoc.getElementsByTagNameNS("*", "chart"); // catches c:chart and cx:chart
-        for (const cEl of chartElems){
-          const rid = cEl.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || cEl.getAttribute("r:id");
-          const chartPath = dRels[rid];
-          if (!chartPath) continue;
-          const chartXml = zip[chartPath];
-          if (!chartXml) continue;
-          const cdoc = parse(chartXml);
-
-          let chartType = "bar";
-          const plotArea = cdoc.getElementsByTagNameNS("*","plotArea")[0];
-          if (plotArea){
-            const firstChartElem = Array.from(plotArea.children).find(n => /chart$/i.test(n.localName));
-            if (firstChartElem) chartType = chartTypeMap[firstChartElem.localName] || "bar";
-          }
-          const title = extractTitle(cdoc);
-
-          function firstDescendantWithLocal2(node, locals){
-            for (const l of locals){
-              const el = node.querySelector(`*:is(${l}, *|${l})`);
-              if (el) return el;
+    const chartsBySheet = {};
+    // Walk sheets
+    for (const m of meta){
+      if (m.kind === "worksheet"){
+        // locate drawings via sheet rels
+        const relPath = `xl/worksheets/_rels/${m.path.split("/").pop()}.rels`;
+        const relEntry = zip[relPath];
+        if (relEntry){
+          const relDoc = parse(relEntry);
+          const drawRels = Array.from(relDoc.getElementsByTagName("Relationship")).filter(r => /drawing/i.test(r.getAttribute("Type")||""));
+          for (const dr of drawRels){
+            const target = dr.getAttribute("Target");
+            const drawingPath = normalisePath(m.path, target);
+            if (!drawingPath) {
+              console.warn(`[charts] Failed to normalize drawing path from ${m.path} + ${target}`);
+              continue;
             }
-            return null;
-          }
-          function readXY2(refNode){
-            if (!refNode) return { refF:null, data:null };
-            const fNode = firstDescendantWithLocal2(refNode, ["f"]);
-            if (fNode && fNode.textContent) return { refF: fNode.textContent.trim(), data: null };
-            const data = (function collect(node){
-              if (!node) return null;
-              const pts = [];
-              const lvlNodes = Array.from(node.querySelectorAll("*|lvl, lvl"));
-              if (lvlNodes.length){
-                const buckets = [];
-                lvlNodes.forEach((lvl, depth)=>{
-                  const members = Array.from(lvl.querySelectorAll("*|pt, pt"));
-                  members.forEach(member=>{
-                    const idx = parseInt(member.getAttribute("idx") ?? `${buckets.length}`, 10);
-                    buckets[idx] = buckets[idx] || new Array(depth+1).fill("");
-                    const txt = member.textContent || "";
-                    buckets[idx][depth] = txt;
-                  });
-                });
-                return buckets.map(arr => arr.join(" / "));
+            const drawingXml = zip[drawingPath];
+            if (!drawingXml) {
+              console.warn(`[charts] Drawing not found: ${drawingPath}`);
+              continue;
+            }
+
+            // map drawing rId -> chart/chartEx
+            const dRelsPath = `xl/drawings/_rels/${drawingPath.split("/").pop()}.rels`;
+            const dRelsXml = zip[dRelsPath];
+            if (!dRelsXml) {
+              console.warn(`[charts] Drawing rels not found: ${dRelsPath}`);
+              continue;
+            }
+            const dRels = {};
+            Array.from(parse(dRelsXml).getElementsByTagName("Relationship")).forEach(r=>{
+              const relTarget = r.getAttribute("Target");
+              const relPath = normalisePath(drawingPath, relTarget);
+              if (relPath) {
+                dRels[r.getAttribute("Id")] = relPath;
               } else {
-                Array.from(node.querySelectorAll("*|pt, pt")).forEach(pt=>{
-                  const idx = parseInt(pt.getAttribute("idx") ?? `${pts.length}`, 10);
-                  pts[idx] = pt.textContent || "";
-                });
-                return pts.filter(v=>v!==undefined);
+                console.warn(`[charts] Failed to normalize chart path from ${drawingPath} + ${relTarget}`);
               }
-            })(refNode);
-            return { refF:null, data };
-          }
-          function readSeriesName2(txNode){
-            if (!txNode) return { nameF:null, nameV:null };
-            const ref = firstDescendantWithLocal2(txNode, ["strRef","strData"]);
-            if (ref){
-              const fNode = firstDescendantWithLocal2(ref, ["f"]);
-              if (fNode && fNode.textContent) return { nameF: fNode.textContent.trim(), nameV: null };
-              const data = (function collect(node){
-                if (!node) return null;
-                const pts = [];
-                Array.from(node.querySelectorAll("*|pt, pt")).forEach(pt=>{
-                  const idx = parseInt(pt.getAttribute("idx") ?? `${pts.length}`, 10);
-                  pts[idx] = pt.textContent || "";
-                });
-                return pts.filter(v=>v!==undefined);
-              })(ref);
-              if (data && data.length) return { nameF:null, nameV:String(data[0] ?? "") };
+            });
+
+            const dDoc = parse(drawingXml);
+            const chartElems = byLocal(dDoc, "chart"); // catches c:chart and cx:chart
+            for (const cEl of chartElems){
+              const rid = cEl.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || cEl.getAttribute("r:id");
+              const chartPath = dRels[rid];
+              if (!chartPath) {
+                console.warn(`[charts] No chart path for rId ${rid} in drawing`);
+                continue;
+              }
+              if (!zip[chartPath]) {
+                console.warn(`[charts] Chart file not found: ${chartPath} (tried rId ${rid})`);
+                continue;
+              }
+              const def = parseChartPart(zip[chartPath]);
+              if (!def) {
+                console.warn(`[charts] Failed to parse chart: ${chartPath}`);
+                continue;
+              }
+              if (!chartsBySheet[m.name]) chartsBySheet[m.name] = [];
+              chartsBySheet[m.name].push(def);
             }
-            const vNode = firstDescendantWithLocal2(txNode, ["v","t","r"]);
-            if (vNode && vNode.textContent) return { nameF:null, nameV: vNode.textContent.trim() };
-            const text = txNode.textContent?.trim();
-            return text ? { nameF:null, nameV:text } : { nameF:null, nameV:null };
           }
-
-          const serNodes = Array.from(cdoc.querySelectorAll("c\\:ser, cx\\:ser, ser"));
-          const series = serNodes.map(ser=>{
-            const tx = ser.querySelector("*|tx, tx");
-            const xRef = ser.querySelector("*|cat, *|xVal, *|xValues, cat, xVal, xValues");
-            const yRef = ser.querySelector("*|val, *|yVal, *|yValues, val, yVal, yValues");
-            const zRef = ser.querySelector("*|zVal, *|zValues, zVal, zValues");
-            const lbls = ser.querySelector("*|dLbls, *|dLabels, dLbls, dLabels");
-            const lRef = lbls ? (lbls.querySelector("*|numRef, *|strRef, *|numLit, *|strLit, numRef, strRef, numLit, strLit")) : null;
-
-            const { nameF, nameV } = readSeriesName2(tx);
-            const { refF: xF, data: xData } = xRef ? readXY2(xRef) : { refF:null, data:null };
-            const { refF: yF, data: yData } = yRef ? readXY2(yRef) : { refF:null, data:null };
-            const { refF: zF, data: zData } = zRef ? readXY2(zRef) : { refF:null, data:null };
-            const labels = lRef ? readXY2(lRef) : { refF:null, data:null };
-
-            return {
-              txRef: nameF, txText: nameV,
-              xRef: xF, xData,
-              yRef: yF, yData,
-              zRef: zF, zData,
-              labelsRef: labels.refF, labelsData: labels.data
-            };
-          });
-
-          defs.push({
-            type: chartType,
-            title: title.titleText || "",
-            titleRef: title.titleF || null,
-            series
-          });
+        }
+      } else if (m.kind === "chartsheet"){
+        // chartsheet -> chart directly via rels
+        const csRelsPath = `xl/chartsheets/_rels/${m.path.split("/").pop()}.rels`;
+        const csXml = zip[csRelsPath];
+        if (csXml){
+          const csDoc = parse(csXml);
+          const chartRel = Array.from(csDoc.getElementsByTagName("Relationship"))
+            .find(r => /relationships\/chart/i.test(r.getAttribute("Type")||""));
+          if (chartRel){
+            const chartPath = normalisePath(m.path, chartRel.getAttribute("Target"));
+            const chartXml = zip[chartPath];
+            if (chartXml){
+              const def = parseChartPart(chartXml);
+              if (def){
+                if (!chartsBySheet[m.name]) chartsBySheet[m.name] = [];
+                chartsBySheet[m.name].push(def);
+              }
+            }
+          }
         }
       }
-
-      if (defs.length) chartsBySheetLocal[sheetName] = defs;
     }
-
-    return chartsBySheetLocal;
-  } catch (err){
-    console.error("Chart extraction failed:", err);
-    setChartsStatus("Chart extraction failed. See console for details.");
+    return chartsBySheet;
+  }catch(e){
+    console.warn("Chart extraction failed:", e);
+    setChartsStatus("Charts unavailable");
     return {};
   }
 }
 
-/* Render charts for selected sheet */
-function renderChartsForActiveSheet(){
-  ensureChartsHost();
-
-  const sheet = sheetSel.value;
-  const defs = chartsBySheet[sheet] || [];
-  const host = chartsOutEl();
-  if (!host) return;
-
-  host.innerHTML = "";
-  if (!defs.length){
-    setChartsStatus("No charts found on this sheet.");
-    return;
-  }
-
-  loadChartLibsOnce().then(()=>{
-    defs.slice(0, 12).forEach((def, idx) => {
-      const title = evalTitle(def);
-      const cnv = document.createElement("canvas");
-      cnv.setAttribute("aria-label", title || `Chart ${idx+1}`);
-      cnv.setAttribute("role", "img");
-      cnv.height = 260;
-
-      const card = document.createElement("div");
-      card.className = "chart-card";
-      const h = document.createElement("h4");
-      h.textContent = title || def.type.toUpperCase();
-      card.appendChild(h);
-      card.appendChild(cnv);
-      host.appendChild(card);
-
-      try {
-        renderChartOnCanvas(def, cnv);
-      } catch (e) {
-        const err = document.createElement("div");
-        err.className = "chart-error";
-        err.textContent = `Failed to render chart: ${e.message || e}`;
-        card.appendChild(err);
-      }
+function debugLogCharts(map){
+  try{
+    const names = Object.keys(map);
+    console.info("[charts] sheets:", names.length ? names.join(", ") : "(none)");
+    names.forEach(n => {
+      console.info(`[charts] ${n}: ${map[n].length} chart(s)`);
+      map[n].forEach((ch, i) => {
+        console.info(`  [${i}] type: ${ch.type}, series: ${ch.series?.length || 0}, title: ${ch.titleText || ch.titleF || "(none)"}`);
+      });
     });
-  });
-}
-
-function evalTitle(def){
-  if (def.title) return def.title;
-  if (def.titleRef){
-    const pr = parseSheetAndRange(def.titleRef);
-    if (pr){
-      const vals = getRangeValues(pr.sheet, pr.range);
-      const flat = rangeToVector(vals);
-      const first = flat.find(v => v != null);
-      if (first != null) return String(first);
-    }
+  }catch(e){
+    console.warn("[charts] debug failed:", e);
   }
-  return "";
 }
 
 function destroyAllCharts(){
-  chartInstances.forEach(ch => { try { ch.destroy(); } catch {} });
+  chartInstances.forEach(ch => { try{ ch.destroy(); }catch{} });
   chartInstances = [];
 }
 
@@ -753,17 +786,29 @@ function getRangeValues(sheetName, rangeA1){
   }
   return out;
 }
-
-function evalSeriesName(ser){
-  return ser.txText || (function(){
-    if (!ser.txRef) return "";
-    const pr = parseSheetAndRange(ser.txRef);
-    if (!pr) return "";
-    const vals = rangeToVector(getRangeValues(pr.sheet, pr.range));
-    return String((vals.find(v=>v!=null) ?? ""));
-  })();
+function evalTitle(def){
+  if (def.titleF){
+    const pr = parseSheetAndRange(def.titleF);
+    if (pr){
+      const vec = rangeToVector(getRangeValues(pr.sheet, pr.range));
+      if (vec.length) return String(vec[0] ?? "");
+    }
+  }
+  return def.titleText || "";
+}
+function evalSeriesName(s){
+  if (s.nameF){
+    const pr = parseSheetAndRange(s.nameF);
+    if (pr){
+      const vec = rangeToVector(getRangeValues(pr.sheet, pr.range));
+      if (vec.length) return String(vec[0] ?? "");
+    }
+  }
+  if (s.nameV) return s.nameV;
+  return "";
 }
 
+/* Build histogram bins if Excel didn't */
 function buildHistogram(values){
   const nums = values.map(Number).filter(v => isFinite(v));
   if (!nums.length) return { labels:[], counts:[] };
@@ -784,472 +829,240 @@ function buildHistogram(values){
   return { labels, counts };
 }
 
-function renderChartOnCanvas(def, cnv){
-  const title = evalTitle(def);
+/* Render charts for currently selected sheet */
+async function renderChartsForActiveSheet(){
+  const sheet = sheetSel.value;
+  const co = chartsOutEl();
+  if (!co) return;
 
-  function resolveLabels(s){
-    if (s.labelsRef){
-      const pr = parseSheetAndRange(s.labelsRef);
-      if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(v=>String(v ?? ""));
-    }
-    if (Array.isArray(s.labelsData)) return s.labelsData.map(v=>String(v ?? ""));
-    return [];
-  }
-  function resolveY(s){
-    if (s.yRef){
-      const pr = parseSheetAndRange(s.yRef);
-      if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
-    }
-    if (Array.isArray(s.yData)) return s.yData.map(Number);
-    return [];
-  }
-  function resolveX(s){
-    if (s.xRef){
-      const pr = parseSheetAndRange(s.xRef);
-      if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range));
-    }
-    if (Array.isArray(s.xData)) return s.xData.slice();
-    return [];
-  }
-  function resolveZ(s){
-    if (s.zRef){
-      const pr = parseSheetAndRange(s.zRef);
-      if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
-    }
-    if (Array.isArray(s.zData)) return s.zData.map(Number);
-    return [];
+  destroyAllCharts();
+  co.innerHTML = "";
+
+  const defs = chartsBySheet[sheet] || [];
+  if (!defs.length){
+    setChartsStatus("No charts found on this sheet.");
+    return;
   }
 
-  if (def.type === "pie" || def.type === "doughnut"){
-    const s0 = def.series[0] || {};
-    const labels = resolveLabels(s0);
-    const data   = resolveY(s0);
-    const cfg = {
-      type: def.type,
-      data: { labels, datasets: [{ label: evalSeriesName(s0) || title || "Series", data }] },
-      options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
-    };
-    chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+  await loadChartLibsOnce();
 
-  } else if (def.type === "scatter" || def.type === "bubble") {
-    const ds = def.series.map((s, i)=>{
-      const x = resolveX(s), y = resolveY(s);
-      const z = resolveZ(s);
-      const data = x.map((xx, idx)=> ({ x: Number(xx), y: Number(y[idx] ?? 0), r: Number(z[idx] ?? 3) }));
-      return { label: evalSeriesName(s) || ("Series " + (i+1)), data, showLine: false };
-    });
-    const cfg = { type: "scatter", data: { datasets: ds }, options: { responsive: true, plugins: { title: { display: !!title, text: title } } } };
-    chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+  defs.slice(0, 12).forEach((def, idx) => {
+    const title = evalTitle(def);
+    const cnv = document.createElement("canvas");
+    cnv.setAttribute("aria-label", title || ("Chart "+(idx+1)));
+    co.appendChild(cnv);
 
-  } else if (def.type === "histogram"){
-    const s0 = def.series[0] || {};
-    const x = resolveX(s0);
-    const y = resolveY(s0);
-    let labels = [];
-    let counts = [];
-    if (y.length){
-      labels = x.map(v=>String(v ?? ""));
-      counts = y;
+    // Helpers to resolve labels/x/y/z either from range refs (HF) or cached data
+    function resolveLabels(firstSeries){
+      if (firstSeries?.catRef){
+        const pr = parseSheetAndRange(firstSeries.catRef);
+        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(v => String(v ?? ""));
+      }
+      if (Array.isArray(firstSeries?.catData)) return firstSeries.catData.map(v => String(v ?? ""));
+      return [];
+    }
+    function resolveY(s){
+      if (s.yRef){
+        const pr = parseSheetAndRange(s.yRef);
+        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+      }
+      if (Array.isArray(s.yData)) return s.yData.map(Number);
+      return [];
+    }
+    function resolveX(s){
+      if (s.xRef){
+        const pr = parseSheetAndRange(s.xRef);
+        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range));
+      }
+      if (Array.isArray(s.xData)) return s.xData.slice();
+      return [];
+    }
+    function resolveZ(s){
+      if (s.zRef){
+        const pr = parseSheetAndRange(s.zRef);
+        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+      }
+      if (Array.isArray(s.zData)) return s.zData.map(Number);
+      return [];
+    }
+
+    if (def.type === "pie" || def.type === "doughnut"){
+      const s0 = def.series[0] || {};
+      const labels = resolveLabels(s0);
+      const data   = resolveY(s0);
+      const cfg = {
+        type: def.type,
+        data: { labels, datasets: [{ label: evalSeriesName(s0) || title || "Series", data }] },
+        options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
+      };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+
+    } else if (def.type === "scatter"){
+      const datasets = def.series.map((s, i) => {
+        const xs = resolveX(s).map(Number);
+        const ys = resolveY(s);
+        const n = Math.min(xs.length, ys.length);
+        const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k]}));
+        return { label: evalSeriesName(s) || ("Series " + (i+1)), data, showLine:false };
+      });
+      const cfg = {
+        type: "scatter",
+        data: { datasets },
+        options: { responsive:true, scales:{ x:{ type:"linear" }, y:{ type:"linear" } }, plugins:{ title:{ display: !!title, text: title } } }
+      };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+
+    } else if (def.type === "bubble"){
+      const datasets = def.series.map((s, i) => {
+        const xs = resolveX(s).map(Number);
+        const ys = resolveY(s);
+        const zs = resolveZ(s);
+        const n = Math.min(xs.length, ys.length, zs.length || Infinity);
+        const zMin = Math.min(...zs.filter(isFinite), 0), zMax = Math.max(...zs.filter(isFinite), 1);
+        const size = (z)=> (!isFinite(z) || zMax===zMin) ? 6 : (4 + 12 * (z - zMin) / (zMax - zMin));
+        const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k], r: size(zs[k])}));
+        return { label: evalSeriesName(s) || ("Series " + (i+1)), data };
+      });
+      const cfg = { type: "bubble", data: { datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+
+    } else if (def.type === "radar"){
+      const s0 = def.series[0] || {};
+      const labels = resolveLabels(s0);
+      const datasets = def.series.map((s, i) => ({
+        label: evalSeriesName(s) || ("Series " + (i+1)),
+        data: resolveY(s)
+      }));
+      const cfg = { type: "radar", data: { labels, datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+
+    } else if (def.type === "histogram"){
+      const s0 = def.series[0] || {};
+      const x = resolveX(s0), y = resolveY(s0);
+      let labels = [], counts = [];
+      if (x.length && y.length && x.length === y.length){
+        labels = x.map(v=>String(v ?? ""));
+        counts = y;
+      } else {
+        const values = y.length ? y : x.map(Number);
+        const h = buildHistogram(values);
+        labels = h.labels; counts = h.counts;
+      }
+      const cfg = { type: "bar", data: { labels, datasets:[{ label: evalSeriesName(s0) || title || "Histogram", data: counts }] }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+
+    } else if (def.type === "stock"){
+      // Expect datasets for O/H/L/C; accept either named series or positional order
+      const s = def.series;
+      if (!s || !s.length) {
+        console.warn("[charts] Stock chart has no series");
+        setChartsStatus("Stock chart: no data");
+        return;
+      }
+      
+      const nameMap = {};
+      s.forEach((ser, i)=>{
+        const nm = (evalSeriesName(ser) || "").toLowerCase();
+        if (/open/.test(nm)) nameMap.open = i;
+        else if (/high/.test(nm)) nameMap.high = i;
+        else if (/low/.test(nm)) nameMap.low = i;
+        else if (/close|last/.test(nm)) nameMap.close = i;
+      });
+      const idxOpen = nameMap.open ?? 0;
+      const idxHigh = nameMap.high ?? 1;
+      const idxLow  = nameMap.low  ?? 2;
+      const idxClose= nameMap.close?? 3;
+
+      const refSeries = s[idxOpen] || s[0] || {};
+      let labels = [];
+      if (refSeries.catRef){
+        const pr = parseSheetAndRange(refSeries.catRef);
+        if (pr) labels = rangeToVector(getRangeValues(pr.sheet, pr.range));
+      } else if (Array.isArray(refSeries.catData)){
+        labels = refSeries.catData.slice();
+      }
+
+      const opens = (s[idxOpen]) ? resolveY(s[idxOpen]) : [];
+      const highs = (s[idxHigh]) ? resolveY(s[idxHigh]) : [];
+      const lows  = (s[idxLow ]) ? resolveY(s[idxLow ]) : [];
+      const closes= (s[idxClose])? resolveY(s[idxClose]) : [];
+      const n = Math.min(labels.length, opens.length, highs.length, lows.length, closes.length);
+
+      if (n === 0) {
+        console.warn("[charts] Stock chart: no valid data points", {labels: labels.length, opens: opens.length, highs: highs.length, lows: lows.length, closes: closes.length});
+        setChartsStatus("Stock chart: insufficient data");
+        return;
+      }
+
+      const use1904 = !!date1904BySheet[sheet];
+      const data = Array.from({length:n}, (_,i)=>{
+        const L = labels[i];
+        let x = L;
+        if (typeof L === "number") {
+          const d = excelSerialToDate(L, use1904);
+          if (d) x = d.getTime();
+        } else if (typeof L === "string") {
+          const d = new Date(L);
+          if (!isNaN(d.getTime())) x = d.getTime();
+        }
+        return { x, o: +opens[i] || 0, h: +highs[i] || 0, l: +lows[i] || 0, c: +closes[i] || 0 };
+      });
+
+      let cfg = {
+        type: "ohlc",
+        data: { datasets: [{ label: title || "OHLC", data }] },
+        options: {
+          responsive: true,
+          parsing: false,
+          scales: { x: { type: "time", time: { unit: "day" } } },
+          plugins: { title: { display: !!title, text: title } }
+        }
+      };
+      try{
+        if (!window.Chart || !window.Chart.registry || !window.Chart.registry.getController("ohlc")) {
+          throw new Error("OHLC controller not registered");
+        }
+        chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+      }catch(e){
+        console.warn("[charts] OHLC chart failed, falling back:", e);
+        // Degrade gracefully if plugin unavailable
+        cfg = {
+          type: "bar",
+          data: { labels: labels.map(v=>String(v ?? "")), datasets:[{ label: "Close", data: closes }] },
+          options: { responsive:true, plugins:{ title:{ display:true, text: (title? title+" (Close only)" : "Close") } } }
+        };
+        chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
+      }
+
     } else {
-      const values = y.length ? y : x.map(Number);
-      const h = buildHistogram(values);
-      labels = h.labels; counts = h.counts;
+      // line / area / bar (default)
+      const s0 = def.series[0] || {};
+      const labels = resolveLabels(s0);
+      const datasets = def.series.map((s, i) => ({
+        label: evalSeriesName(s) || ("Series " + (i+1)),
+        data: resolveY(s)
+      }));
+      const chartTypeMap = {
+        area: "line",
+        bar: "bar",
+        waterfall: "bar",
+        funnel: "bar",
+        boxWhisker: "bar",
+        treemap: "bar",
+        sunburst: "bar",
+        surface: "line",
+        combo: "bar",
+        line: "line"
+      };
+      const chartType = chartTypeMap[def.type] || "line";
+      const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
+      if (chartType === "line" && def.type === "area") {
+        datasets.forEach(d => d.fill = true);
+      }
+      const cfg = { type: chartType, data: { labels, datasets }, options };
+      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
     }
-    const cfg = { type: "bar", data: { labels, datasets:[{ label: title || "Histogram", data: counts }] },
-      options:{ responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
-    chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
-
-  } else if (def.type === "stock"){
-    // Expect datasets for O/H/L/C; accept either named series or positional order
-    const s = def.series;
-    if (!s || !s.length) {
-      console.warn("[charts] Stock chart has no series");
-      setChartsStatus("Stock chart: no data");
-      return;
-    }
-    
-    const nameMap = {};
-    s.forEach((ser, i)=>{
-      const nm = (evalSeriesName(ser) || "").toLowerCase();
-      if (/open/.test(nm)) nameMap.open = i;
-      else if (/high/.test(nm)) nameMap.high = i;
-      else if (/low/.test(nm)) nameMap.low = i;
-      else if (/close|last/.test(nm)) nameMap.close = i;
-    });
-    const idxOpen = nameMap.open ?? 0;
-    const idxHigh = nameMap.high ?? 1;
-    const idxLow  = nameMap.low  ?? 2;
-    const idxClose= nameMap.close?? 3;
-
-    const sOpen = s[idxOpen] || s[0] || {};
-    const sHigh = s[idxHigh] || s[1] || {};
-    const sLow  = s[idxLow]  || s[2] || {};
-    const sClose= s[idxClose]|| s[3] || {};
-
-    const labels = resolveLabels(sClose);
-    const open = resolveY(sOpen), high = resolveY(sHigh), low = resolveY(sLow), close = resolveY(sClose);
-
-    const data = labels.map((lab, i)=>({ t: lab, o: open[i] ?? null, h: high[i] ?? null, l: low[i] ?? null, c: close[i] ?? null }));
-    const cfg = { type: "bar", data: { labels, datasets:[{ label: title || "OHLC", data: data.map(d=>d.c) }] }, options:{ plugins:{ title:{ display: !!title, text: title } } } };
-    chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
-
-  } else {
-    // line / area / bar (default)
-    const s0 = def.series[0] || {};
-    const labels = resolveLabels(s0);
-    const datasets = def.series.map((s, i) => ({
-      label: evalSeriesName(s) || ("Series " + (i+1)),
-      data: resolveY(s)
-    }));
-    const chartTypeMap = {
-      area: "line",
-      bar: "bar",
-      waterfall: "bar",
-      funnel: "bar",
-      boxWhisker: "bar",
-      treemap: "bar",
-      sunburst: "bar",
-      surface: "line",
-      combo: "bar",
-      line: "line"
-    };
-    const chartType = chartTypeMap[def.type] || "line";
-    const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
-    if (chartType === "line" && def.type === "area") {
-      datasets.forEach(d => d.fill = true);
-    }
-    const cfg = { type: chartType, data: { labels, datasets }, options };
-    chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
-  }
+  });
 }
 
 /* ===================== END CHARTS ===================== */
-
-/* ---------- Boot ---------- */
-(async function boot(){
-  try {
-    await openPath(fileSel.value);
-  } catch (e) {
-    console.error(e);
-    status(`Failed to open default file: ${e.message || e}`);
-  }
-})();
-
-/* ===== Patch v2: Remove CDN dependency by using native DecompressionStream to read XLSX =====
-   This overrides extractChartsFromXLSX() to prefer a CSP-safe, no-network path.
-   If DecompressionStream is unavailable, it will fall back to the previous fflate-based path.
-----------------------------------------------------------------------------------------------*/
-
-async function unzipWithNative(arrayBuffer){
-  if (typeof DecompressionStream === "undefined") throw new Error("DecompressionStream not available");
-  const bytes = new Uint8Array(arrayBuffer);
-  const len = bytes.length;
-
-  // Find End of Central Directory (EOCD) signature 0x06054b50
-  function readU32LE(i){ return (bytes[i] | (bytes[i+1]<<8) | (bytes[i+2]<<16) | (bytes[i+3]<<24)) >>> 0; }
-  function readU16LE(i){ return (bytes[i] | (bytes[i+1]<<8)) >>> 0; }
-
-  const eocdSig = 0x06054b50 >>> 0;
-  let eocd = -1;
-  const maxBack = Math.min(len, 22 + 65536 + 1024); // EOCD + max comment + buffer
-  for (let i = len - 22; i >= len - maxBack; i--){
-    if (i < 0) break;
-    if (readU32LE(i) === eocdSig){ eocd = i; break; }
-  }
-  if (eocd < 0) throw new Error("ZIP EOCD not found");
-
-  const cdSize   = readU32LE(eocd + 12);
-  const cdOffset = readU32LE(eocd + 16);
-  const cdEnd = cdOffset + cdSize;
-
-  // Iterate Central Directory entries
-  const cdSig = 0x02014b50 >>> 0;
-  const lfSig = 0x04034b50 >>> 0;
-
-  const decoder = new TextDecoder("utf-8");
-  const entries = [];
-  let p = cdOffset;
-  while (p + 46 <= cdEnd && readU32LE(p) === cdSig){
-    const compression = readU16LE(p + 10);
-    const compSize = readU32LE(p + 20);
-    const uncompSize = readU32LE(p + 24);
-    const nameLen = readU16LE(p + 28);
-    const extraLen = readU16LE(p + 30);
-    const commentLen = readU16LE(p + 32);
-    const localHeaderOffset = readU32LE(p + 42);
-
-    const nameBytes = bytes.subarray(p + 46, p + 46 + nameLen);
-    const name = decoder.decode(nameBytes);
-
-    entries.push({ name, compression, compSize, uncompSize, localHeaderOffset });
-    p += 46 + nameLen + extraLen + commentLen;
-  }
-
-  async function inflateRaw(u8){
-    const ds = new DecompressionStream('deflate-raw');
-    const resp = new Response(new Blob([u8]).stream().pipeThrough(ds));
-    const ab = await resp.arrayBuffer();
-    return new Uint8Array(ab);
-  }
-
-  const out = {};
-  for (const ent of entries){
-    if (readU32LE(ent.localHeaderOffset) !== lfSig) continue;
-    const nlen = readU16LE(ent.localHeaderOffset + 26);
-    const xlen = readU16LE(ent.localHeaderOffset + 28);
-    const dataStart = ent.localHeaderOffset + 30 + nlen + xlen;
-    const comp = bytes.subarray(dataStart, dataStart + ent.compSize);
-    let u8;
-    if (ent.compression === 0){ // stored
-      u8 = comp.slice();
-    } else if (ent.compression === 8){ // deflate
-      u8 = await inflateRaw(comp);
-    } else {
-      // Unsupported method; skip quietly
-      continue;
-    }
-    out[ent.name.toLowerCase()] = u8;
-  }
-  return out;
-}
-
-// Keep a handle to the old implementation as fallback
-const __extractChartsFromXLSX_fflate = extractChartsFromXLSX;
-
-/** Override: prefer native unzip, fallback to fflate */
-async function extractChartsFromXLSX(arrayBuffer){
-  // native path
-  if (typeof DecompressionStream !== "undefined"){
-    try{
-      const zip = await unzipWithNative(arrayBuffer);
-      const tdDecoder = new TextDecoder("utf-8");
-
-      const get = (p) => zip[(p||"").toLowerCase()];
-      const readXML = (p) => {
-        const u8 = get(p);
-        return u8 ? tdDecoder.decode(u8) : null;
-      };
-
-      const wbXml = readXML("xl/workbook.xml");
-      const relsXml = readXML("xl/_rels/workbook.xml.rels");
-      if (!wbXml || !relsXml){
-        setChartsStatus("No workbook parts found.");
-        return {};
-      }
-
-      const parse = (xml) => (new DOMParser()).parseFromString(xml, "application/xml");
-      const wdoc = parse(wbXml);
-      const rdoc = parse(relsXml);
-
-      // sheet -> target map from workbook rels
-      const sheets = Array.from(wdoc.getElementsByTagName("sheet")).map(s => ({
-        name: s.getAttribute("name"),
-        rid:  s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || s.getAttribute("r:id")
-      }));
-      const wbRels = {};
-      Array.from(rdoc.getElementsByTagName("Relationship")).forEach(r=>{
-        wbRels[r.getAttribute("Id")] = r.getAttribute("Target");
-      });
-
-      const meta = sheets.map(s => {
-        const tgt = wbRels[s.rid] || "";
-        const path = ("xl/" + tgt.replace(/^\//,"")).toLowerCase();
-        const kind = /chartsheets\//i.test(tgt) ? "chartsheet" : "worksheet";
-        return { name: s.name, path, kind };
-      });
-
-      function byLocal(doc, local){
-        return Array.from(doc.getElementsByTagNameNS("*", local)).concat(Array.from(doc.getElementsByTagName(local)));
-      }
-      function firstDescendantWithLocal(node, locals){
-        for (const l of locals){
-          const el = node.querySelector(`*:is(${l}, *|${l})`);
-          if (el) return el;
-        }
-        return null;
-      }
-      function collectPoints(node){
-        if (!node) return null;
-        const pts = [];
-        const lvlNodes = byLocal(node, "lvl");
-        if (lvlNodes.length){
-          const buckets = [];
-          lvlNodes.forEach((lvl, depth)=>{
-            const members = byLocal(lvl, "pt");
-            members.forEach(member=>{
-              const idx = parseInt(member.getAttribute("idx") ?? `${buckets.length}`, 10);
-              buckets[idx] = buckets[idx] || new Array(depth+1).fill("");
-              const txt = member.textContent || "";
-              buckets[idx][depth] = txt;
-            });
-          });
-          return buckets.map(arr => arr.join(" / "));
-        } else {
-          byLocal(node, "pt").forEach(pt=>{
-            const idx = parseInt(pt.getAttribute("idx") ?? `${pts.length}`, 10);
-            pts[idx] = pt.textContent || "";
-          });
-          return pts.filter(v=>v!==undefined);
-        }
-      }
-
-      function readXY(refNode){
-        if (!refNode) return { refF:null, data:null };
-        const fNode = firstDescendantWithLocal(refNode, ["f"]);
-        if (fNode && fNode.textContent) return { refF: fNode.textContent.trim(), data: null };
-        const data = collectPoints(refNode);
-        return { refF:null, data };
-      }
-      function readSeriesName(txNode){
-        if (!txNode) return { nameF:null, nameV:null };
-        const ref = firstDescendantWithLocal(txNode, ["strRef","strData"]);
-        if (ref){
-          const fNode = firstDescendantWithLocal(ref, ["f"]);
-          if (fNode && fNode.textContent) return { nameF: fNode.textContent.trim(), nameV: null };
-          const data = collectPoints(ref);
-          if (data && data.length) return { nameF:null, nameV:String(data[0] ?? "") };
-        }
-        const vNode = firstDescendantWithLocal(txNode, ["v","t","r"]);
-        if (vNode && vNode.textContent) return { nameF:null, nameV: vNode.textContent.trim() };
-        const text = txNode.textContent?.trim();
-        return text ? { nameF:null, nameV:text } : { nameF:null, nameV:null };
-      }
-      function extractTitle(doc){
-        const titleNode = byLocal(doc, "title")[0];
-        if (!titleNode) return { titleF:null, titleText:null };
-        const ref = firstDescendantWithLocal(titleNode, ["strRef","strData"]);
-        if (ref){
-          const fNode = firstDescendantWithLocal(ref, ["f"]);
-          if (fNode && fNode.textContent) return { titleF: fNode.textContent.trim(), titleText: null };
-          const data = collectPoints(ref);
-          if (data && data.length) return { titleF:null, titleText:String(data[0] ?? "") };
-        }
-        const vNode = firstDescendantWithLocal(titleNode, ["v","t"]);
-        if (vNode && vNode.textContent) return { titleF:null, titleText: vNode.textContent.trim() };
-        return { titleF:null, titleText:null };
-      }
-
-      const chartTypeMap = {
-        barChart: "bar", bar3DChart: "bar", lineChart: "line", line3DChart: "line",
-        areaChart: "area", scatterChart: "scatter", bubbleChart: "bubble",
-        pieChart: "pie", pie3DChart: "pie", doughnutChart: "doughnut",
-        radarChart: "radar", histogramChart: "histogram", paretoChart: "bar",
-        stockChart: "stock", waterfallChart: "waterfall", funnelChart: "funnel",
-        boxWhiskerChart: "boxWhisker", sunburstChart: "sunburst", treemapChart: "treemap",
-        surfaceChart: "surface", surface3DChart: "surface", wireframeSurfaceChart: "surface",
-        wireframeSurface3DChart: "surface", comboChart: "combo", ofPieChart: "pie"
-      };
-
-      const chartsBySheetLocal = {};
-
-      for (const { name: sheetName, path: sheetPath, kind } of meta){
-        if (kind !== "worksheet" && kind !== "chartsheet") continue;
-
-        // read drawing rels from the sheet rels
-        const relsPath = sheetPath.replace(/(^xl\/)(worksheets|chartsheets)\//, "$1$2/_rels/").replace(/\.xml$/i, ".xml.rels");
-        const relsXml2 = readXML(relsPath);
-        const rels = {};
-        if (relsXml2){
-          const rdoc2 = parse(relsXml2);
-          Array.from(rdoc2.getElementsByTagName("Relationship")).forEach(r=>{
-            rels[r.getAttribute("Id")] = r.getAttribute("Target");
-          });
-        }
-
-        const drawingTarget = rels["rId1"]; // simple case; otherwise scan for Type contains '/drawing'
-        const drawingTargets = Object.values(rels).filter(t => /drawing/i.test(t));
-        const drawList = drawingTargets.length ? drawingTargets : (drawingTarget ? [drawingTarget] : []);
-        const defs = [];
-
-        for (const drawT of drawList){
-          const drawPath = normalisePath(sheetPath, drawT);
-          const drawingXml = readXML(drawPath);
-          if (!drawingXml) continue;
-          const ddoc = parse(drawingXml);
-
-          // map drawing rId -> chart path
-          const dRelsPath = drawPath.replace(/(^xl\/)drawings\//, "$1drawings/_rels/") + ".rels";
-          const dRelsXml = readXML(dRelsPath);
-          const dRels = {};
-          if (dRelsXml){
-            const ddoc2 = parse(dRelsXml);
-            Array.from(ddoc2.getElementsByTagName("Relationship")).forEach(r=>{
-              const relTarget = r.getAttribute("Target");
-              const relPath = normalisePath(drawPath, relTarget);
-              if (relPath) dRels[r.getAttribute("Id")] = relPath;
-            });
-          }
-
-          const chartElems = ddoc.getElementsByTagNameNS("*", "chart");
-          for (const cEl of chartElems){
-            const rid = cEl.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || cEl.getAttribute("r:id");
-            const chartPath = dRels[rid];
-            if (!chartPath) continue;
-            const chartXml = readXML(chartPath);
-            if (!chartXml) continue;
-            const cdoc = parse(chartXml);
-
-            let chartType = "bar";
-            const plotArea = cdoc.getElementsByTagNameNS("*","plotArea")[0];
-            if (plotArea){
-              const firstChartElem = Array.from(plotArea.children).find(n => /chart$/i.test(n.localName));
-              if (firstChartElem) chartType = chartTypeMap[firstChartElem.localName] || "bar";
-            }
-            const title = extractTitle(cdoc);
-
-            function readSerNodes(selector){
-              return Array.from(cdoc.querySelectorAll(selector));
-            }
-            function readSeriesFromNodes(nodes){
-              const arr = [];
-              for (const ser of nodes){
-                const tx    = firstDescendantWithLocal(ser, ["tx"]);
-                const xRef  = firstDescendantWithLocal(ser, ["cat","xVal","xValues"]);
-                const yRef  = firstDescendantWithLocal(ser, ["val","yVal","yValues"]);
-                const zRef  = firstDescendantWithLocal(ser, ["zVal","zValues"]);
-                const lbls  = firstDescendantWithLocal(ser, ["dLbls","dLabels"]);
-                const lRef  = lbls ? firstDescendantWithLocal(lbls, ["numRef","strRef","numLit","strLit"]) : null;
-
-                const { nameF, nameV } = readSeriesName(tx);
-                const { refF: xF, data: xData } = xRef ? readXY(xRef) : { refF:null, data:null };
-                const { refF: yF, data: yData } = yRef ? readXY(yRef) : { refF:null, data:null };
-                const { refF: zF, data: zData } = zRef ? readXY(zRef) : { refF:null, data:null };
-                const labels = lRef ? readXY(lRef) : { refF:null, data:null };
-
-                arr.push({
-                  txRef: nameF, txText: nameV,
-                  xRef: xF, xData,
-                  yRef: yF, yData,
-                  zRef: zF, zData,
-                  labelsRef: labels.refF, labelsData: labels.data
-                });
-              }
-              return arr;
-            }
-
-            // Gather series across known chart node types
-            const serNodes = Array.from(cdoc.querySelectorAll("c\\:ser, cx\\:ser, ser"));
-            const series = readSeriesFromNodes(serNodes);
-
-            defs.push({
-              type: chartType,
-              title: title.titleText || "",
-              titleRef: title.titleF || null,
-              series
-            });
-          }
-        }
-
-        if (defs.length) chartsBySheetLocal[sheetName] = defs;
-      }
-
-      return chartsBySheetLocal;
-    } catch (err){
-      console.warn("[charts] Native unzip failed; falling back to fflate:", err);
-      // fall through to fflate path
-    }
-  }
-
-  // fallback to original fflate-based implementation
-  return await __extractChartsFromXLSX_fflate(arrayBuffer);
-}
