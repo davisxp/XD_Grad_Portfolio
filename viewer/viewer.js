@@ -337,29 +337,55 @@ function loadChartLibsOnce(){
     await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
     await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
+    
+    // Wait a tick for scripts to fully initialize
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
     if (window.Chart && window.Chart.register) {
-      const seen = new Set();
-      function tryAdd(obj){
-        if (!obj) return;
-        const key = obj.id || obj.prototype?.id || obj.name;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          registrables.push(obj);
-        }
-      }
       const registrables = [];
-      const globalExports = window["chartjs-chart-financial"];
-      if (globalExports && typeof globalExports === "object") {
-        Object.values(globalExports).forEach(tryAdd);
+      
+      // Try multiple ways to find the financial plugin exports
+      const pluginGlobal = window["chartjs-chart-financial"];
+      if (pluginGlobal) {
+        // Plugin might export everything directly
+        if (typeof pluginGlobal === "object") {
+          Object.values(pluginGlobal).forEach(obj => {
+            if (obj && (obj.id || obj.prototype?.id)) {
+              registrables.push(obj);
+            }
+          });
+        }
+        // Or it might have specific exports
+        if (pluginGlobal.OhlcController) registrables.push(pluginGlobal.OhlcController);
+        if (pluginGlobal.OhlcElement) registrables.push(pluginGlobal.OhlcElement);
+        if (pluginGlobal.CandlestickController) registrables.push(pluginGlobal.CandlestickController);
+        if (pluginGlobal.CandlestickElement) registrables.push(pluginGlobal.CandlestickElement);
       }
-      const names = [
-        "FinancialController","CandlestickController","OhlcController",
-        "FinancialElement","CandlestickElement","OhlcElement",
-        "ScaledFinancialElement","FinancialScale"
-      ];
-      names.forEach(n => tryAdd(window.Chart[n]));
-      if (registrables.length) {
-        try { window.Chart.register(...registrables); } catch(_) {}
+      
+      // Also check Chart namespace
+      if (window.Chart.OhlcController) registrables.push(window.Chart.OhlcController);
+      if (window.Chart.OhlcElement) registrables.push(window.Chart.OhlcElement);
+      if (window.Chart.CandlestickController) registrables.push(window.Chart.CandlestickController);
+      if (window.Chart.CandlestickElement) registrables.push(window.Chart.CandlestickElement);
+      
+      // Remove duplicates
+      const seen = new Set();
+      const unique = registrables.filter(obj => {
+        const key = obj.id || obj.prototype?.id || obj.name || String(obj);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      
+      if (unique.length) {
+        try { 
+          window.Chart.register(...unique);
+          console.info("[charts] Registered financial plugin controllers:", unique.map(o => o.id || o.name || "unknown"));
+        } catch(e) {
+          console.warn("[charts] Failed to register financial plugin:", e);
+        }
+      } else {
+        console.warn("[charts] No financial plugin controllers found to register");
       }
     }
   })();
@@ -631,19 +657,34 @@ async function extractChartsFromXLSX(arrayBuffer){
           const relDoc = parse(relEntry);
           const drawRels = Array.from(relDoc.getElementsByTagName("Relationship")).filter(r => /drawing/i.test(r.getAttribute("Type")||""));
           for (const dr of drawRels){
-            const drawingPath = normalisePath(m.path, dr.getAttribute("Target"));
-            if (!drawingPath) continue;
+            const target = dr.getAttribute("Target");
+            const drawingPath = normalisePath(m.path, target);
+            if (!drawingPath) {
+              console.warn(`[charts] Failed to normalize drawing path from ${m.path} + ${target}`);
+              continue;
+            }
             const drawingXml = zip[drawingPath];
-            if (!drawingXml) continue;
+            if (!drawingXml) {
+              console.warn(`[charts] Drawing not found: ${drawingPath}`);
+              continue;
+            }
 
             // map drawing rId -> chart/chartEx
             const dRelsPath = `xl/drawings/_rels/${drawingPath.split("/").pop()}.rels`;
             const dRelsXml = zip[dRelsPath];
-            if (!dRelsXml) continue;
+            if (!dRelsXml) {
+              console.warn(`[charts] Drawing rels not found: ${dRelsPath}`);
+              continue;
+            }
             const dRels = {};
             Array.from(parse(dRelsXml).getElementsByTagName("Relationship")).forEach(r=>{
-              const relPath = normalisePath(drawingPath, r.getAttribute("Target"));
-              if (relPath) dRels[r.getAttribute("Id")] = relPath;
+              const relTarget = r.getAttribute("Target");
+              const relPath = normalisePath(drawingPath, relTarget);
+              if (relPath) {
+                dRels[r.getAttribute("Id")] = relPath;
+              } else {
+                console.warn(`[charts] Failed to normalize chart path from ${drawingPath} + ${relTarget}`);
+              }
             });
 
             const dDoc = parse(drawingXml);
@@ -651,9 +692,19 @@ async function extractChartsFromXLSX(arrayBuffer){
             for (const cEl of chartElems){
               const rid = cEl.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || cEl.getAttribute("r:id");
               const chartPath = dRels[rid];
-              if (!chartPath || !zip[chartPath]) continue;
+              if (!chartPath) {
+                console.warn(`[charts] No chart path for rId ${rid} in drawing`);
+                continue;
+              }
+              if (!zip[chartPath]) {
+                console.warn(`[charts] Chart file not found: ${chartPath} (tried rId ${rid})`);
+                continue;
+              }
               const def = parseChartPart(zip[chartPath]);
-              if (!def) continue;
+              if (!def) {
+                console.warn(`[charts] Failed to parse chart: ${chartPath}`);
+                continue;
+              }
               if (!chartsBySheet[m.name]) chartsBySheet[m.name] = [];
               chartsBySheet[m.name].push(def);
             }
@@ -693,8 +744,15 @@ function debugLogCharts(map){
   try{
     const names = Object.keys(map);
     console.info("[charts] sheets:", names.length ? names.join(", ") : "(none)");
-    names.forEach(n => console.info(`[charts] ${n}: ${map[n].length} chart(s)`));
-  }catch{}
+    names.forEach(n => {
+      console.info(`[charts] ${n}: ${map[n].length} chart(s)`);
+      map[n].forEach((ch, i) => {
+        console.info(`  [${i}] type: ${ch.type}, series: ${ch.series?.length || 0}, title: ${ch.titleText || ch.titleF || "(none)"}`);
+      });
+    });
+  }catch(e){
+    console.warn("[charts] debug failed:", e);
+  }
 }
 
 function destroyAllCharts(){
@@ -903,6 +961,12 @@ async function renderChartsForActiveSheet(){
     } else if (def.type === "stock"){
       // Expect datasets for O/H/L/C; accept either named series or positional order
       const s = def.series;
+      if (!s || !s.length) {
+        console.warn("[charts] Stock chart has no series");
+        setChartsStatus("Stock chart: no data");
+        return;
+      }
+      
       const nameMap = {};
       s.forEach((ser, i)=>{
         const nm = (evalSeriesName(ser) || "").toLowerCase();
@@ -931,6 +995,12 @@ async function renderChartsForActiveSheet(){
       const closes= (s[idxClose])? resolveY(s[idxClose]) : [];
       const n = Math.min(labels.length, opens.length, highs.length, lows.length, closes.length);
 
+      if (n === 0) {
+        console.warn("[charts] Stock chart: no valid data points", {labels: labels.length, opens: opens.length, highs: highs.length, lows: lows.length, closes: closes.length});
+        setChartsStatus("Stock chart: insufficient data");
+        return;
+      }
+
       const use1904 = !!date1904BySheet[sheet];
       const data = Array.from({length:n}, (_,i)=>{
         const L = labels[i];
@@ -940,9 +1010,9 @@ async function renderChartsForActiveSheet(){
           if (d) x = d.getTime();
         } else if (typeof L === "string") {
           const d = new Date(L);
-          if (!isNaN(d)) x = d.getTime();
+          if (!isNaN(d.getTime())) x = d.getTime();
         }
-        return { x, o: +opens[i], h: +highs[i], l: +lows[i], c: +closes[i] };
+        return { x, o: +opens[i] || 0, h: +highs[i] || 0, l: +lows[i] || 0, c: +closes[i] || 0 };
       });
 
       let cfg = {
@@ -956,8 +1026,12 @@ async function renderChartsForActiveSheet(){
         }
       };
       try{
+        if (!window.Chart || !window.Chart.registry || !window.Chart.registry.getController("ohlc")) {
+          throw new Error("OHLC controller not registered");
+        }
         chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
       }catch(e){
+        console.warn("[charts] OHLC chart failed, falling back:", e);
         // Degrade gracefully if plugin unavailable
         cfg = {
           type: "bar",
