@@ -3,7 +3,7 @@
 > A showcase of my experience and competencies in financial modeling, valuation, and deal-structuring in healthcare and life science markets.
 
 - This portfolio is intended to demonstrate my strengths in building comprehensive, sensitised financial models, conducting valuation analysis, and structuring complex transactions. All models are interactive and available for review through the live viewer or direct download. 
-- Live viewing of in-sheet charts is currently unavailable, however this functionality is being implimented. 
+
 ---
 
 ## Quick Access
@@ -44,7 +44,6 @@ The live viewer provides a read-only, browser-based experience for exploring mod
 ### Direct Downloads
 
 All models are available for direct download below. Files can be opened in Excel for full editing capabilities and deeper analysis.
-
 ---
 
 ## Available Models
@@ -53,10 +52,10 @@ All models are available for direct download below. Files can be opened in Excel
 
 | Model | Description | Status |
 |-------|-------------|--------|
-| **[Three-Statement Model](models/3_Statement_Model.xlsx?raw=1)** | Integrated income statement, balance sheet, and cash flow statement with dynamic drivers and scenario analysis | Complete |
-| **[DCF Valuations](models/DCF_SN.xlsx?raw=1)** | Discounted cash flow analysis using both exit multiple and perpetuity growth methods, including SOTP and rNPV valuations | Complete |
+| **[Three-Statement Model](models/3_Statement_Model.xlsx?raw=1)** | Integrated income statement, balance sheet, and cash flow statement | Complete |
+| **[DCF Valuations](models/DCF_SN.xlsx?raw=1)** | Discounted cash flow analysis using both exit multiple and perpetuity growth methods, built upon with SOTP and rNPV valuations | Complete |
 | **[Comparables & Precedents](models/Comps_Precs.xlsx?raw=1)** | Comparable company analysis and precedent transaction analysis for relative valuation | Complete |
-| **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)** | Consolidated valuation summary with cross-methodology reconciliation | In Progress |
+| **[Valuation Overview](models/Valuation_Overview.xlsx?raw=1)** |PDF valuation summary with cross-methodology reconciliation, includ | In Progress |
 
 ### Deal Structuring Models
 
