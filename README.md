@@ -19,10 +19,10 @@ This portfolio demonstrates expertise in building comprehensive financial models
 
 This collection includes integrated financial models covering the full spectrum of corporate finance and investment analysis:
 
-- **Integrated Financial Modeling:** Three-statement models with dynamic scenario analysis
-- **Valuation Methodologies:** DCF (multiples and perpetuity), SOTP, rNPV, and comparable company/precedent transaction analysis
-- **Deal Structuring:** M&A accretion/dilution, LBO modeling, and capital markets transactions
-- **Investment Analysis:** Long and short investment proposals with comprehensive thesis development
+- **Integrated Financial Modeling:** All models integrated with dynamic scenarios and cross-model linkage.  
+- **Valuation Methodologies:** DCF (multiples and perpetuity), SOTP, rNPV, and comparable company/precedent transaction analyses.
+- **Deal Structuring:** M&A accretion/dilution, LBO modeling, and capital market transactions.
+- **Investment Analysis:** Long and short investment proposals with thesis development.
 
 ---
 
