@@ -43,7 +43,8 @@ The live viewer provides a read-only, browser-based experience for exploring mod
 
 ### Direct Downloads
 
-All models are available for direct download below. Files can be opened in Excel for full editing capabilities and deeper analysis.
+- All models are available for direct download below. Files can be opened in Excel for full editing capabilities and deeper analysis. 
+- All files are dependent on the three statement model to run, it is recommended to download the models as a complete zip file (unimplemented) 
 ---
 
 ## Available Models
