@@ -1,8 +1,9 @@
 # Finance Portfolio:  Xavier Davis
 
 > A showcase of my experience and competencies in financial modeling, valuation, and deal-structuring in healthcare and life science markets.
-This portfolio is intended to demonstrate my strengths in building comprehensive, sensitised financial models, conducting valuation analysis, and structuring complex transactions. All models are interactive and available for review through the live viewer or direct download.
-Live viewing of in-sheet charts is currently unavailable, however this functionality is being implimented. 
+
+- This portfolio is intended to demonstrate my strengths in building comprehensive, sensitised financial models, conducting valuation analysis, and structuring complex transactions. All models are interactive and available for review through the live viewer or direct download. 
+- Live viewing of in-sheet charts is currently unavailable, however this functionality is being implimented. 
 ---
 
 ## Quick Access
