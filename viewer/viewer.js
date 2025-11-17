@@ -280,8 +280,15 @@ function copyDeepLink(){
   }).catch(() => status("Could not copy link"));
 }
 function syncLink(){
-  dlLink.href = currentPath;
-  dlLink.textContent = "Download " + (files.find(f=>f.path===currentPath)?.label || "workbook");
+  // Securely set dlLink.href only if currentPath matches a known file path
+  const matchingFile = files.find(f => f.path === currentPath);
+  if (matchingFile) {
+    dlLink.href = matchingFile.path;
+    dlLink.textContent = "Download " + matchingFile.label;
+  } else {
+    dlLink.href = "#";
+    dlLink.textContent = "Download workbook";
+  }
 }
 function status(t){ statusEl.textContent = t; }
 
