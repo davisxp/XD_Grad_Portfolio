@@ -339,25 +339,20 @@ function ensureChartsPanel(){
   // quick inline sizing so we don't need CSS edits
   const css = document.createElement("style");
   css.textContent = `
-  #chartsPanel {
+  #notesPanel {
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
     max-height: 90vh;
   }
-  #chartsOut canvas {
-    width: 100%;
-    max-width: 100%;
-    height: auto;
-    aspect-ratio: 1.6 / 1;
-    display: block;
-    margin: 12px 0;
-  }
+  
   #notesOut {
-  overflow-y: auto;
-  max-height: 60vh;
-  scrollbar-width: thin;
-  scrollbar-color: #bbb transparent;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+    max-height: 60vh;
+    padding-right: 6px;
+    scrollbar-width: thin;
+    scrollbar-color: #bbb transparent;
   }
   #notesOut::-webkit-scrollbar {
     width: 6px;
@@ -366,11 +361,9 @@ function ensureChartsPanel(){
     background: #bbb;
     border-radius: 3px;
   }
-  @media (max-width: 720px) {
-    #chartsOut canvas { aspect-ratio: 1 / 1; }
-  }
-`;
+  `;
   document.head.appendChild(css);
+  
 }
 function chartsOutEl(){ return document.getElementById("chartsOut"); }
 function setChartsStatus(text){
