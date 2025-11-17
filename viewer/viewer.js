@@ -321,7 +321,26 @@ function ensureChartsPanel(){
 
   // quick inline sizing so we don't need CSS edits
   const css = document.createElement("style");
-  css.textContent = "#chartsOut canvas{width:100%;height:260px;display:block;margin:10px 0}";
+  css.textContent = `
+  #chartsPanel {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    max-height: 90vh;
+  }
+  #chartsOut canvas {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 1.6 / 1;
+    display: block;
+    margin: 12px 0;
+  }
+  @media (max-width: 720px) {
+    #chartsOut canvas { aspect-ratio: 1 / 1; }
+}
+
+`;
   document.head.appendChild(css);
 }
 function chartsOutEl(){ return document.getElementById("chartsOut"); }
@@ -845,6 +864,16 @@ async function renderChartsForActiveSheet(){
     const title = evalTitle(def);
     const cnv = document.createElement("canvas");
     cnv.setAttribute("aria-label", title || ("Chart "+(idx+1)));
+
+    // === Heuristic sizing: set aspect ratio per chart type ===
+    if (/bar|histogram/i.test(def.type)) {
+      cnv.style.aspectRatio = "1 / 1";
+    } else if (/stock|ohlc|candlestick/i.test(def.type)) {
+      cnv.style.aspectRatio = "2 / 1";
+    } else {
+      cnv.style.aspectRatio = "1.6 / 1";
+    }
+
     co.appendChild(cnv);
 
     // Helpers to resolve labels/x/y/z either from range refs (HF) or cached data
