@@ -618,6 +618,39 @@ async function extractChartsFromXLSX(arrayBuffer){
     }
     function parseChartPart(u8){
       const doc = parse(u8);
+      // --- Extract Excel chart layout hints (axes + scaling) ---
+      let xMin = null, xMax = null, yMin = null, yMax = null;
+      let legendPos = "top";
+
+      const xAx = byLocal(doc, "valAx").concat(byLocal(doc, "catAx"))[0];
+      if (xAx) {
+        const scaling = byLocal(xAx, "scaling")[0];
+        if (scaling) {
+          const minEl = byLocal(scaling, "min")[0];
+          const maxEl = byLocal(scaling, "max")[0];
+          if (minEl && !isNaN(+minEl.textContent)) xMin = +minEl.textContent;
+          if (maxEl && !isNaN(+maxEl.textContent)) xMax = +maxEl.textContent;
+        }
+      }
+      const yAx = byLocal(doc, "valAx")[1] || null;
+      if (yAx) {
+        const scaling = byLocal(yAx, "scaling")[0];
+        if (scaling) {
+          const minEl = byLocal(scaling, "min")[0];
+          const maxEl = byLocal(scaling, "max")[0];
+          if (minEl && !isNaN(+minEl.textContent)) yMin = +minEl.textContent;
+          if (maxEl && !isNaN(+maxEl.textContent)) yMax = +maxEl.textContent;
+        }
+      }
+
+      // Legend placement
+      const legend = byLocal(doc, "legend")[0];
+      if (legend) {
+        const posEl = byLocal(legend, "legendPos")[0];
+        const posVal = posEl && posEl.getAttribute("val");
+        if (posVal) legendPos = posVal.toLowerCase();
+      }
+
       const order = [
         "lineChart","line3DChart","barChart","bar3DChart","columnChart",
         "areaChart","area3DChart","scatterChart","bubbleChart",
@@ -679,8 +712,8 @@ async function extractChartsFromXLSX(arrayBuffer){
           zRef:   z.refF   || null, zData:  z.data  || null
         };
       });
-
-      return { type, titleF, titleText, series };
+      
+      return { type, titleF, titleText, series, xMin, xMax, yMin, yMax, legendPos };
     }
 
     const chartsBySheet = {};
