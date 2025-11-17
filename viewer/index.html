@@ -718,6 +718,10 @@ header .toolbar input[type="text"]:focus,
             return new Intl.NumberFormat("en-GB", opts).format(val);
           } catch {}
         }
+        if (cell && typeof val === "number" && !cell.z) {
+          return val.toFixed(2);
+        }
+
         return (typeof val === "number") ? new Intl.NumberFormat("en-GB").format(val) : String(val);
       }
 
