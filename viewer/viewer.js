@@ -1,6 +1,6 @@
 // viewer.js (ES module) — UI orchestration + chart extraction/rendering.
 // Relies on global third-party libs loaded by index.html: XLSX, HyperFormula, fflate.
-// Loads Chart.js + plugins on-demand.
+// Loads Chart.js + plugins on-demand.  
 const files = [
   { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
   { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
@@ -379,78 +379,12 @@ function loadChartLibsOnce(){
 /* Helpers shared by extractor and renderer */
 const tdDecoder = new TextDecoder("utf-8");
 const byLocal = (root, name) => Array.from(root.getElementsByTagName("*")).filter(n => n.localName === name);
-const CHART_TYPE_ORDER = [
-  "lineChart","line3DChart","barChart","bar3DChart","columnChart","column3DChart",
-  "areaChart","area3DChart","scatterChart","bubbleChart","pieChart","pie3DChart",
-  "doughnutChart","radarChart","histogramChart","stockChart","waterfallChart",
-  "funnelChart","boxWhiskerChart","sunburstChart","treemapChart","surfaceChart",
-  "surface3DChart","wireframeSurfaceChart","wireframeSurface3DChart","paretoChart",
-  "comboChart","ofPieChart"
-];
-const CHART_TYPE_FALLBACK = {
-  lineChart: "line",
-  line3DChart: "line",
-  barChart: "bar",
-  bar3DChart: "bar",
-  columnChart: "bar",
-  column3DChart: "bar",
-  areaChart: "area",
-  area3DChart: "area",
-  scatterChart: "scatter",
-  bubbleChart: "bubble",
-  pieChart: "pie",
-  pie3DChart: "pie",
-  doughnutChart: "doughnut",
-  radarChart: "radar",
-  histogramChart: "histogram",
-  paretoChart: "bar",
-  stockChart: "stock",
-  waterfallChart: "waterfall",
-  funnelChart: "funnel",
-  boxWhiskerChart: "boxWhisker",
-  sunburstChart: "sunburst",
-  treemapChart: "treemap",
-  surfaceChart: "surface",
-  surface3DChart: "surface",
-  wireframeSurfaceChart: "surface",
-  wireframeSurface3DChart: "surface",
-  comboChart: "combo",
-  ofPieChart: "pie"
-};
 
 function normalisePath(base, target){
-  if (!target) return null;
-  const clean = target.replace(/\\/g, "/");
-  if (/^\//.test(clean)) {
-    return clean.replace(/^\//, "").toLowerCase();
-  }
-
-  const baseDirParts = (base ? base.split("/").slice(0, -1) : []);
-  const rawParts = clean.split("/");
-  const stack = [];
-
-  function pushParts(parts){
-    parts.forEach(part => {
-      if (!part || part === ".") return;
-      if (part === "..") {
-        if (stack.length) stack.pop();
-      } else {
-        stack.push(part);
-      }
-    });
-  }
-
-  if (/^xl\//i.test(clean)) {
-    pushParts(clean.split("/"));
-  } else {
-    pushParts(baseDirParts);
-    pushParts(rawParts);
-  }
-
-  if (stack.length && stack[0].toLowerCase() !== "xl") {
-    stack.unshift("xl");
-  }
-  return stack.join("/").toLowerCase();
+  // Build a normalised path under xl/
+  const t = (target || "").replace(/^\//,"").replace(/^(\.\.\/)+/g,"");
+  if (/^xl\//i.test(base)) return "xl/" + t.replace(/^xl\//i, "");
+  return "xl/" + t.replace(/^xl\//i, "");
 }
 
 function excelSerialToDate(serial, use1904){
@@ -492,142 +426,117 @@ async function extractChartsFromXLSX(arrayBuffer){
       return { name: s.name, path, kind };
     });
 
-    function collectPoints(node){
-      if (!node) return null;
-      const pts = [];
-      const lvlNodes = byLocal(node, "lvl");
-      if (lvlNodes.length){
-        const buckets = [];
-        lvlNodes.forEach((lvl, depth)=>{
-          const members = byLocal(lvl, "pt");
-          members.forEach(member=>{
-            const idx = parseInt(member.getAttribute("idx") ?? `${buckets.length}`, 10);
-            const valAttr = member.getAttribute("val");
-            const vNode = byLocal(member, "v")[0];
-            const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : member.textContent);
-            if (!buckets[idx]) buckets[idx] = [];
-            buckets[idx][depth] = text;
-          });
+    function readLitOrCache(parent){
+      // Try cached data first (pivot charts often rely on caches)
+      const cache = byLocal(parent, "numCache")[0] || byLocal(parent, "strCache")[0];
+      if (cache){
+        const pts = byLocal(cache, "pt"); const arr = [];
+        pts.forEach(pt=>{
+          const idx = parseInt(pt.getAttribute("idx")||"0",10);
+          const v = byLocal(pt, "v")[0];
+          arr[idx] = v ? v.textContent : null;
         });
-        return buckets.map(path => (path || []).filter(Boolean).join(" / "));
+        if (arr.length) return arr;
       }
-
-      const pointNodes = byLocal(node, "pt");
-      pointNodes.forEach(pt=>{
-        const idxAttr = pt.getAttribute("idx");
-        const idx = idxAttr != null ? parseInt(idxAttr, 10) : pts.length;
-        const valAttr = pt.getAttribute("val");
-        const vNode = byLocal(pt, "v")[0];
-        const text = valAttr != null ? valAttr : (vNode ? vNode.textContent : pt.textContent);
-        pts[idx] = text;
-      });
-      if (pts.length) return pts;
-
-      const nary = byLocal(node, "ptValue");
-      if (nary.length){
-        nary.forEach((pt, i)=>{
-          const idxAttr = pt.getAttribute("idx");
-          const idx = idxAttr != null ? parseInt(idxAttr, 10) : i;
-          pts[idx] = pt.textContent;
+      // Then literal
+      const lit = byLocal(parent, "numLit")[0] || byLocal(parent, "strLit")[0];
+      if (lit){
+        const pts = byLocal(lit, "pt"); const arr = [];
+        pts.forEach(pt=>{
+          const idx = parseInt(pt.getAttribute("idx")||"0",10);
+          const v = byLocal(pt, "v")[0];
+          arr[idx] = v ? v.textContent : null;
         });
-      }
-      return pts.length ? pts : null;
-    }
-
-    function firstDescendantWithLocal(node, localNames){
-      if (!node) return null;
-      const wanted = Array.isArray(localNames) ? localNames : [localNames];
-      const all = node.getElementsByTagName("*");
-      for (let i=0;i<all.length;i++){
-        const el = all[i];
-        if (wanted.includes(el.localName)) return el;
+        if (arr.length) return arr;
       }
       return null;
     }
-
-    function pickRefOrData(seriesNode, candidates){
+    function pickRefOrData(sNode, parentNames){
       let refF = null, data = null;
-      for (const candidate of candidates){
-        const containers = byLocal(seriesNode, candidate);
-        for (const container of containers){
-          const refNode = firstDescendantWithLocal(container, ["numRef","strRef","numData","strData","multiLvlStrRef"]);
-          if (refNode && !refF){
-            const fNode = firstDescendantWithLocal(refNode, "f");
-            if (fNode && fNode.textContent) refF = fNode.textContent.trim();
-          }
+      for (const nm of parentNames){
+        const p = byLocal(sNode, nm)[0];
+        if (!p) continue;
+        const numRef = byLocal(p, "numRef")[0] || byLocal(p, "strRef")[0];
+        if (numRef){
+          const f = byLocal(numRef, "f")[0];
+          if (f && f.textContent) { refF = f.textContent.trim(); }
           if (!data){
-            data = collectPoints(refNode) || collectPoints(container);
+            const cached = readLitOrCache(numRef);
+            if (cached) data = cached;
           }
-          if (refF || data) break;
+          if (refF) break;
         }
-        if (refF || data) break;
+        // fallbacks
+        const lit = readLitOrCache(p);
+        if (lit && !data) data = lit;
       }
       return { refF, data };
     }
-
-    function readSeriesName(txNode){
-      if (!txNode) return { nameF:null, nameV:null };
-      const ref = firstDescendantWithLocal(txNode, ["strRef","strData"]);
-      if (ref){
-        const fNode = firstDescendantWithLocal(ref, "f");
-        if (fNode && fNode.textContent) return { nameF: fNode.textContent.trim(), nameV: null };
-        const data = collectPoints(ref);
-        if (data && data.length) return { nameF: null, nameV: String(data[0] ?? "") };
-      }
-      const vNode = firstDescendantWithLocal(txNode, ["v","t","r"]);
-      if (vNode && vNode.textContent) return { nameF:null, nameV: vNode.textContent.trim() };
-      const text = txNode.textContent?.trim();
-      return text ? { nameF:null, nameV:text } : { nameF:null, nameV:null };
-    }
-
-    function extractTitle(doc){
-      const titleNode = byLocal(doc, "title")[0];
-      if (!titleNode) return { titleF:null, titleText:null };
-      const ref = firstDescendantWithLocal(titleNode, ["strRef","strData"]);
-      if (ref){
-        const fNode = firstDescendantWithLocal(ref, "f");
-        if (fNode && fNode.textContent) return { titleF: fNode.textContent.trim(), titleText: null };
-        const data = collectPoints(ref);
-        if (data && data.length) return { titleF:null, titleText:String(data[0] ?? "") };
-      }
-      const vNode = firstDescendantWithLocal(titleNode, ["v","t"]);
-      if (vNode && vNode.textContent) return { titleF:null, titleText: vNode.textContent.trim() };
-      const text = titleNode.textContent?.trim();
-      return text ? { titleF:null, titleText:text } : { titleF:null, titleText:null };
-    }
-
-    function parseClassicChart(doc){
-      const typeNode = CHART_TYPE_ORDER.map(t => byLocal(doc, t)[0]).find(Boolean);
-      if (!typeNode) return null;
-      const mappedType = CHART_TYPE_FALLBACK[typeNode.localName] || "line";
-      const { titleF, titleText } = extractTitle(doc);
-      const serNodes = byLocal(typeNode, "ser").concat(byLocal(typeNode, "series"));
-      const series = serNodes.map(sN => {
-        const { nameF, nameV } = readSeriesName(byLocal(sN, "tx")[0]);
-        const cat = pickRefOrData(sN, ["cat","category","xVal","categories"]);
-        const y   = pickRefOrData(sN, ["val","yVal","values"]);
-        const z   = pickRefOrData(sN, ["bubbleSize","zVal","size","sizes"]);
-        return {
-          nameF,
-          nameV,
-          catRef: cat.refF || null,
-          catData: cat.data || null,
-          xRef: cat.refF || null,
-          xData: cat.data || null,
-          yRef: y.refF || null,
-          yData: y.data || null,
-          zRef: z.refF || null,
-          zData: z.data || null
-        };
-      });
-      return { type: mappedType, titleF, titleText, series };
-    }
-
     function parseChartPart(u8){
       const doc = parse(u8);
-      const classic = parseClassicChart(doc);
-      if (classic) return classic;
-      return null;
+      const order = [
+        "lineChart","line3DChart","barChart","bar3DChart","columnChart",
+        "areaChart","area3DChart","scatterChart","bubbleChart",
+        "pieChart","pie3DChart","doughnutChart","radarChart",
+        "histogramChart","stockChart","waterfallChart","funnelChart","boxWhiskerChart","sunburstChart","treemapChart"
+      ];
+      const typeNode = order.map(t => byLocal(doc, t)[0]).find(Boolean);
+      if (!typeNode) return null;
+
+      let type = typeNode.localName;
+      if (/histogram/i.test(type)) type = "histogram";
+      else if (/stock/i.test(type)) type = "stock";
+      else if (/bubble/i.test(type)) type = "bubble";
+      else if (/radar/i.test(type)) type = "radar";
+      else if (/doughnut/i.test(type)) type = "doughnut";
+      else if (/pie/i.test(type)) type = "pie";
+      else if (/scatter/i.test(type)) type = "scatter";
+      else if (/bar|column/i.test(type)) type = "bar";
+      else if (/area/i.test(type)) type = "area";
+      else if (/line/i.test(type)) type = "line";
+      else type = "line";
+
+      let titleF = null, titleText = null;
+      const tN = byLocal(doc, "title")[0];
+      if (tN){
+        const strRef = byLocal(tN, "strRef")[0];
+        const vNode = byLocal(tN, "v")[0];
+        if (strRef){
+          const fNode = byLocal(strRef, "f")[0];
+          if (fNode && fNode.textContent) titleF = fNode.textContent.trim();
+        } else if (vNode){
+          titleText = vNode.textContent.trim();
+        }
+      }
+
+      // Series (supports both c:ser and cx:series)
+      const serNodes = byLocal(typeNode, "ser").concat(byLocal(typeNode, "series"));
+      const series = serNodes.map(sN => {
+        let nameF = null, nameV = null;
+        const tx = byLocal(sN, "tx")[0];
+        if (tx){
+          const strRef = byLocal(tx, "strRef")[0];
+          const vNode = byLocal(tx, "v")[0];
+          if (strRef){
+            const f = byLocal(strRef, "f")[0];
+            if (f && f.textContent) nameF = f.textContent.trim();
+          } else if (vNode){
+            nameV = vNode.textContent.trim();
+          }
+        }
+        const cat = pickRefOrData(sN, ["cat","xVal"]);
+        const y   = pickRefOrData(sN, ["val","yVal"]);
+        const z   = pickRefOrData(sN, ["bubbleSize"]);
+        return {
+          nameF, nameV,
+          catRef: cat.refF || null, catData: cat.data || null,
+          xRef:   cat.refF || null, xData:  cat.data || null,
+          yRef:   y.refF   || null, yData:  y.data  || null,
+          zRef:   z.refF   || null, zData:  z.data  || null
+        };
+      });
+
+      return { type, titleF, titleText, series };
     }
 
     const chartsBySheet = {};
@@ -641,34 +550,17 @@ async function extractChartsFromXLSX(arrayBuffer){
           const relDoc = parse(relEntry);
           const drawRels = Array.from(relDoc.getElementsByTagName("Relationship")).filter(r => /drawing/i.test(r.getAttribute("Type")||""));
           for (const dr of drawRels){
-            const target = dr.getAttribute("Target");
-            const drawingPath = normalisePath(m.path, target);
-            if (!drawingPath) {
-              console.warn(`[charts] Failed to normalize drawing path from ${m.path} + ${target}`);
-              continue;
-            }
+            const drawingPath = normalisePath(m.path, dr.getAttribute("Target")).toLowerCase();
             const drawingXml = zip[drawingPath];
-            if (!drawingXml) {
-              console.warn(`[charts] Drawing not found: ${drawingPath}`);
-              continue;
-            }
+            if (!drawingXml) continue;
 
             // map drawing rId -> chart/chartEx
             const dRelsPath = `xl/drawings/_rels/${drawingPath.split("/").pop()}.rels`;
             const dRelsXml = zip[dRelsPath];
-            if (!dRelsXml) {
-              console.warn(`[charts] Drawing rels not found: ${dRelsPath}`);
-              continue;
-            }
+            if (!dRelsXml) continue;
             const dRels = {};
             Array.from(parse(dRelsXml).getElementsByTagName("Relationship")).forEach(r=>{
-              const relTarget = r.getAttribute("Target");
-              const relPath = normalisePath(drawingPath, relTarget);
-              if (relPath) {
-                dRels[r.getAttribute("Id")] = relPath;
-              } else {
-                console.warn(`[charts] Failed to normalize chart path from ${drawingPath} + ${relTarget}`);
-              }
+              dRels[r.getAttribute("Id")] = normalisePath(drawingPath, r.getAttribute("Target")).toLowerCase();
             });
 
             const dDoc = parse(drawingXml);
@@ -676,19 +568,9 @@ async function extractChartsFromXLSX(arrayBuffer){
             for (const cEl of chartElems){
               const rid = cEl.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id") || cEl.getAttribute("r:id");
               const chartPath = dRels[rid];
-              if (!chartPath) {
-                console.warn(`[charts] No chart path for rId ${rid} in drawing`);
-                continue;
-              }
-              if (!zip[chartPath]) {
-                console.warn(`[charts] Chart file not found: ${chartPath} (tried rId ${rid})`);
-                continue;
-              }
+              if (!chartPath || !zip[chartPath]) continue;
               const def = parseChartPart(zip[chartPath]);
-              if (!def) {
-                console.warn(`[charts] Failed to parse chart: ${chartPath}`);
-                continue;
-              }
+              if (!def) continue;
               if (!chartsBySheet[m.name]) chartsBySheet[m.name] = [];
               chartsBySheet[m.name].push(def);
             }
@@ -703,7 +585,7 @@ async function extractChartsFromXLSX(arrayBuffer){
           const chartRel = Array.from(csDoc.getElementsByTagName("Relationship"))
             .find(r => /relationships\/chart/i.test(r.getAttribute("Type")||""));
           if (chartRel){
-            const chartPath = normalisePath(m.path, chartRel.getAttribute("Target"));
+            const chartPath = normalisePath(m.path, chartRel.getAttribute("Target")).toLowerCase();
             const chartXml = zip[chartPath];
             if (chartXml){
               const def = parseChartPart(chartXml);
@@ -728,15 +610,8 @@ function debugLogCharts(map){
   try{
     const names = Object.keys(map);
     console.info("[charts] sheets:", names.length ? names.join(", ") : "(none)");
-    names.forEach(n => {
-      console.info(`[charts] ${n}: ${map[n].length} chart(s)`);
-      map[n].forEach((ch, i) => {
-        console.info(`  [${i}] type: ${ch.type}, series: ${ch.series?.length || 0}, title: ${ch.titleText || ch.titleF || "(none)"}`);
-      });
-    });
-  }catch(e){
-    console.warn("[charts] debug failed:", e);
-  }
+    names.forEach(n => console.info(`[charts] ${n}: ${map[n].length} chart(s)`));
+  }catch{}
 }
 
 function destroyAllCharts(){
@@ -1017,19 +892,7 @@ async function renderChartsForActiveSheet(){
         label: evalSeriesName(s) || ("Series " + (i+1)),
         data: resolveY(s)
       }));
-      const chartTypeMap = {
-        area: "line",
-        bar: "bar",
-        waterfall: "bar",
-        funnel: "bar",
-        boxWhisker: "bar",
-        treemap: "bar",
-        sunburst: "bar",
-        surface: "line",
-        combo: "bar",
-        line: "line"
-      };
-      const chartType = chartTypeMap[def.type] || "line";
+      const chartType = (def.type === "area") ? "line" : (def.type === "bar" ? "bar" : "line");
       const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
       if (chartType === "line" && def.type === "area") {
         datasets.forEach(d => d.fill = true);
@@ -1041,238 +904,3 @@ async function renderChartsForActiveSheet(){
 }
 
 /* ===================== END CHARTS ===================== */
-
-/* ===================== NOTES EXTRACTION & UI ===================== */
-
-/**
- * Best-effort extraction of Excel notes/comments.
- * Handles:
- *  - Legacy comments: xl/comments*.xml
- *  - Threaded comments: xl/threadedComments/*.xml
- * Returns an object mapping sheetName -> array of { addr, author, text, date? }
- */
-async function extractNotesFromXLSX(arrayBuffer){
-  try{
-    const fflateLib = (typeof fflate !== "undefined") ? fflate : await ensureFflate();
-    const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
-    const zip = {}; Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
-
-    const td = new TextDecoder("utf-8");
-    const parseXml = (u8) => (new DOMParser()).parseFromString(td.decode(u8), "application/xml");
-
-    const results = {};
-
-    // 1) Legacy comments: xl/comments*.xml
-    const commentEntries = Object.keys(zip).filter(p => p.startsWith("xl/") && /\/comments\d*\.xml$/.test(p));
-    for (const p of commentEntries){
-      try{
-        const doc = parseXml(zip[p]);
-        const authorsNode = doc.getElementsByTagName("authors")[0];
-        const authors = authorsNode ? Array.from(authorsNode.getElementsByTagName("author")).map(a => a.textContent || "Unknown") : [];
-        const commentNodes = Array.from(doc.getElementsByTagName("comment") || []);
-        for (const c of commentNodes){
-          const ref = c.getAttribute("ref") || "";
-          const addr = ref.split("!").pop();
-          const authorId = Number(c.getAttribute("authorId") || 0);
-          const author = authors[authorId] || "Unknown";
-          const textEl = c.getElementsByTagName("text")[0];
-          let text = "";
-          if (textEl){
-            const tNodes = textEl.getElementsByTagName("t");
-            if (tNodes.length) text = Array.from(tNodes).map(n=>n.textContent).join("");
-            else text = textEl.textContent || "";
-          }
-          // store unmapped; we will attempt to map to sheet via rels
-          if (!results["__unmapped__"]) results["__unmapped__"] = [];
-          results["__unmapped__"].push({ addr, author, text, rawPath: p });
-        }
-      }catch(e){ console.warn("[notes] legacy comments parse failed", p, e); }
-    }
-
-    // 2) Threaded comments: xl/threadedComments/*.xml
-    const threaded = Object.keys(zip).filter(p => p.startsWith("xl/threadedcomments/") && p.endsWith(".xml"));
-    for (const p of threaded){
-      try{
-        const doc = parseXml(zip[p]);
-        // authors: <authors><author id="..."><displayName>...</displayName>...
-        const authorMap = {};
-        Array.from(doc.getElementsByTagName("author")||[]).forEach((a, i)=>{
-          const id = a.getAttribute("id") || String(i);
-          const dn = a.getElementsByTagName("displayName")[0];
-          const name = (dn && dn.textContent) ? dn.textContent : (a.textContent || "Unknown");
-          authorMap[id] = name;
-        });
-        Array.from(doc.getElementsByTagName("comment")||[]).forEach(c=>{
-          const ref = c.getAttribute("ref") || "";
-          const addr = ref.split("!").pop();
-          const aid = c.getAttribute("authorId") || "0";
-          const author = authorMap[aid] || "Unknown";
-          const textNode = c.getElementsByTagName("text")[0];
-          let text = "";
-          if (textNode){
-            const tNodes = textNode.getElementsByTagName("t");
-            if (tNodes.length) text = Array.from(tNodes).map(n=>n.textContent).join("");
-            else text = textNode.textContent || "";
-          }
-          const last = c.getElementsByTagName("lastModified")[0];
-          const date = last ? last.textContent : null;
-          if (!results["__unmapped__"]) results["__unmapped__"] = [];
-          results["__unmapped__"].push({ addr, author, text, date, rawPath: p });
-        });
-      }catch(e){ console.warn("[notes] threaded comments parse failed", p, e); }
-    }
-
-    // 3) Map unmapped notes to sheets via workbook rels and worksheets rels
-    const wbXml = zip["xl/workbook.xml"];
-    const wbRelsXml = zip["xl/_rels/workbook.xml.rels"];
-    const sheetMap = {}; // worksheet file path -> sheet name
-    if (wbXml && wbRelsXml){
-      try{
-        const wdoc = parseXml(wbXml);
-        const rdoc = parseXml(wbRelsXml);
-        const rrels = {};
-        Array.from(rdoc.getElementsByTagName("Relationship") || []).forEach(r => {
-          rrels[r.getAttribute("Id")] = r.getAttribute("Target");
-        });
-        Array.from(wdoc.getElementsByTagName("sheet") || []).forEach(s => {
-          const name = s.getAttribute("name");
-          const rid = s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || s.getAttribute("r:id");
-          const tgt = rrels[rid] || "";
-          const path = ("xl/" + tgt.replace(/^\//,"")).toLowerCase();
-          sheetMap[path] = name;
-        });
-      }catch(e){}
-    }
-
-    // Attempt to find owner worksheet for each unmapped comment by scanning worksheet rels
-    if (results["__unmapped__"] && results["__unmapped__"].length){
-      const relFiles = Object.keys(zip).filter(k => k.startsWith("xl/worksheets/_rels/") && k.endsWith(".rels"));
-      for (const cm of results["__unmapped__"]){
-        let ownerSheetName = null;
-        try{
-          for (const rf of relFiles){
-            const rdoc = parseXml(zip[rf]);
-            const rels = Array.from(rdoc.getElementsByTagName("Relationship") || []);
-            for (const r of rels){
-              const target = r.getAttribute("Target") || "";
-              if (!target) continue;
-              const norm = normalisePath(rf, target);
-              if (!norm) continue;
-              if (norm === cm.rawPath.toLowerCase()){
-                // owner is the worksheet whose rel file this is
-                const wsFile = rf.replace(/^xl\/worksheets\/_rels\//, "xl/worksheets/").replace(/\.rels$/,"");
-                ownerSheetName = sheetMap[wsFile] || null;
-                break;
-              }
-            }
-            if (ownerSheetName) break;
-          }
-        }catch(e){}
-        const sheetKey = ownerSheetName || "__unknown_sheet__";
-        if (!results[sheetKey]) results[sheetKey] = [];
-        results[sheetKey].push({ addr: cm.addr, author: cm.author, text: cm.text, date: cm.date || null });
-      }
-      delete results["__unmapped__"];
-    }
-
-    // Normalize result keys by trimming possible surrounding quotes
-    const normalized = {};
-    for (const [k,v] of Object.entries(results)){
-      const nk = typeof k === "string" ? k.replace(/^['"]|['"]$/g,'') : k;
-      normalized[nk] = v;
-    }
-    return normalized;
-  }catch(e){
-    console.warn("[notes] extraction failed", e);
-    return {};
-  }
-}
-
-/* ===================== NOTES PANEL UI ===================== */
-
-function ensureNotesPanel(){
-  let panel = document.getElementById("notesPanel");
-  if (panel) return;
-  const aside = document.querySelector("aside");
-  if (!aside) return;
-  panel = document.createElement("div");
-  panel.className = "panel";
-  panel.id = "notesPanel";
-  const h2 = document.createElement("h2");
-  h2.textContent = "Notes";
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.textContent = "Cell notes and comments extracted from the workbook.";
-  const out = document.createElement("div");
-  out.id = "notesOut";
-  panel.appendChild(h2); panel.appendChild(meta); panel.appendChild(out);
-  aside.appendChild(panel);
-}
-
-function notesOutEl(){ return document.getElementById("notesOut"); }
-
-/**
- * Render the notes for the active sheet in the notes panel.
- * Click on a note will try to scroll to and highlight the corresponding cell in the render.
- */
-function renderNotesForActiveSheet(){
-  const sheet = sheetSel.value;
-  const out = notesOutEl();
-  if (!out) return;
-  out.innerHTML = "";
-  const notes = notesBySheet[sheet] || [];
-  if (!notes.length){
-    out.innerHTML = `<div class="meta">No notes found on this sheet.</div>`;
-    return;
-  }
-  // sort by address (A1, A2, ...)
-  notes.sort((a,b)=> (a.addr||"").localeCompare(b.addr||""));
-  notes.forEach(n=>{
-    const el = document.createElement("div");
-    el.className = "note";
-    const addr = document.createElement("b");
-    addr.textContent = (n.addr || "Cell");
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = n.author ? `Author: ${n.author}` : "Author: –";
-    const text = document.createElement("div");
-    text.textContent = n.text || "";
-    text.style.marginTop = "6px";
-    el.appendChild(addr);
-    el.appendChild(meta);
-    el.appendChild(text);
-    if (n.date){
-      const d = document.createElement("div");
-      d.className = "meta";
-      d.textContent = `Updated: ${n.date}`;
-      el.appendChild(d);
-    }
-    out.appendChild(el);
-
-    el.addEventListener('click', ()=>{
-      // Try to find cell with data-address attribute in the currentHTMLTable
-      if (!currentHTMLTable || !n.addr) {
-        el.animate ? el.animate([{ transform: "translateY(-2px)" }, { transform: "translateY(0)" }], { duration: 150 }) : null;
-        return;
-      }
-      const selector = `[data-address="${n.addr}"]`;
-      const td = currentHTMLTable.querySelector(selector);
-      if (td){
-        td.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
-        td.classList.add('note-highlight');
-        setTimeout(()=> td.classList.remove('note-highlight'), 2400);
-      } else {
-        // Try case-insensitive lookup in case address formatting differs
-        const candidates = Array.from(currentHTMLTable.querySelectorAll('td[data-address]')).filter(t=> (t.dataset.address || "").toLowerCase()=== (n.addr||"").toLowerCase());
-        if (candidates.length){
-          candidates[0].scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
-          candidates[0].classList.add('note-highlight');
-          setTimeout(()=> candidates[0].classList.remove('note-highlight'), 2400);
-        } else {
-          // flash the notes item if no corresponding cell
-          el.animate ? el.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: 200 }) : null;
-        }
-      }
-    });
-  });
-}
