@@ -1,8 +1,6 @@
 // viewer.js (ES module) — UI orchestration + chart extraction/rendering.
 // Relies on global third-party libs loaded by index.html: XLSX, HyperFormula, fflate.
 // Loads Chart.js + plugins on-demand.
-
-/* --------- Config copied from backup (unchanged) --------- */
 const files = [
   { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
   { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
@@ -47,6 +45,9 @@ let wbBuf = null;
 let chartsBySheet = {};    // { [sheetName]: ChartDef[] }
 let chartInstances = [];   // live Chart.js instances for cleanup
 
+/* NEW: notes storage */
+let notesBySheet = {};     // { [sheetName]: [{ addr, author, text, date }] }
+
 /* --------- Init UI --------- */
 (function bootstrap() {
   // Files dropdown
@@ -77,8 +78,11 @@ let chartInstances = [];   // live Chart.js instances for cleanup
   // Scenarios
   scenarioSel.addEventListener("change", onScenarioChange);
 
-  // Ensure a Charts panel exists (no HTML change required)
+  // Ensure a Charts panel exists and is visible
   ensureChartsPanel();
+
+   // Ensure Notes panel exists and is visible
+   ensureNotesPanel();
 
   // Deep-link boot
   initFromQueryAndLoad();
@@ -125,12 +129,18 @@ async function loadWorkbook(path) {
     chartsBySheet = await extractChartsFromXLSX(wbBuf);
     debugLogCharts(chartsBySheet);
 
+    // NEW: Extract notes/comments from the raw XLSX
+    notesBySheet = await extractNotesFromXLSX(wbBuf) || {};
+    // ensure the notes panel exists and render for initial sheet
+    ensureNotesPanel();
+
     // Init scenario from workbook / URL
     initScenarioFromHF();
 
     // Render sheet + charts
     renderActiveSheet();
     renderChartsForActiveSheet();
+    renderNotesForActiveSheet();
 
     status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
     syncLink();
@@ -1031,3 +1041,238 @@ async function renderChartsForActiveSheet(){
 }
 
 /* ===================== END CHARTS ===================== */
+
+/* ===================== NOTES EXTRACTION & UI ===================== */
+
+/**
+ * Best-effort extraction of Excel notes/comments.
+ * Handles:
+ *  - Legacy comments: xl/comments*.xml
+ *  - Threaded comments: xl/threadedComments/*.xml
+ * Returns an object mapping sheetName -> array of { addr, author, text, date? }
+ */
+async function extractNotesFromXLSX(arrayBuffer){
+  try{
+    const fflateLib = (typeof fflate !== "undefined") ? fflate : await ensureFflate();
+    const zipRaw = fflateLib.unzipSync(new Uint8Array(arrayBuffer));
+    const zip = {}; Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
+
+    const td = new TextDecoder("utf-8");
+    const parseXml = (u8) => (new DOMParser()).parseFromString(td.decode(u8), "application/xml");
+
+    const results = {};
+
+    // 1) Legacy comments: xl/comments*.xml
+    const commentEntries = Object.keys(zip).filter(p => p.startsWith("xl/") && /\/comments\d*\.xml$/.test(p));
+    for (const p of commentEntries){
+      try{
+        const doc = parseXml(zip[p]);
+        const authorsNode = doc.getElementsByTagName("authors")[0];
+        const authors = authorsNode ? Array.from(authorsNode.getElementsByTagName("author")).map(a => a.textContent || "Unknown") : [];
+        const commentNodes = Array.from(doc.getElementsByTagName("comment") || []);
+        for (const c of commentNodes){
+          const ref = c.getAttribute("ref") || "";
+          const addr = ref.split("!").pop();
+          const authorId = Number(c.getAttribute("authorId") || 0);
+          const author = authors[authorId] || "Unknown";
+          const textEl = c.getElementsByTagName("text")[0];
+          let text = "";
+          if (textEl){
+            const tNodes = textEl.getElementsByTagName("t");
+            if (tNodes.length) text = Array.from(tNodes).map(n=>n.textContent).join("");
+            else text = textEl.textContent || "";
+          }
+          // store unmapped; we will attempt to map to sheet via rels
+          if (!results["__unmapped__"]) results["__unmapped__"] = [];
+          results["__unmapped__"].push({ addr, author, text, rawPath: p });
+        }
+      }catch(e){ console.warn("[notes] legacy comments parse failed", p, e); }
+    }
+
+    // 2) Threaded comments: xl/threadedComments/*.xml
+    const threaded = Object.keys(zip).filter(p => p.startsWith("xl/threadedcomments/") && p.endsWith(".xml"));
+    for (const p of threaded){
+      try{
+        const doc = parseXml(zip[p]);
+        // authors: <authors><author id="..."><displayName>...</displayName>...
+        const authorMap = {};
+        Array.from(doc.getElementsByTagName("author")||[]).forEach((a, i)=>{
+          const id = a.getAttribute("id") || String(i);
+          const dn = a.getElementsByTagName("displayName")[0];
+          const name = (dn && dn.textContent) ? dn.textContent : (a.textContent || "Unknown");
+          authorMap[id] = name;
+        });
+        Array.from(doc.getElementsByTagName("comment")||[]).forEach(c=>{
+          const ref = c.getAttribute("ref") || "";
+          const addr = ref.split("!").pop();
+          const aid = c.getAttribute("authorId") || "0";
+          const author = authorMap[aid] || "Unknown";
+          const textNode = c.getElementsByTagName("text")[0];
+          let text = "";
+          if (textNode){
+            const tNodes = textNode.getElementsByTagName("t");
+            if (tNodes.length) text = Array.from(tNodes).map(n=>n.textContent).join("");
+            else text = textNode.textContent || "";
+          }
+          const last = c.getElementsByTagName("lastModified")[0];
+          const date = last ? last.textContent : null;
+          if (!results["__unmapped__"]) results["__unmapped__"] = [];
+          results["__unmapped__"].push({ addr, author, text, date, rawPath: p });
+        });
+      }catch(e){ console.warn("[notes] threaded comments parse failed", p, e); }
+    }
+
+    // 3) Map unmapped notes to sheets via workbook rels and worksheets rels
+    const wbXml = zip["xl/workbook.xml"];
+    const wbRelsXml = zip["xl/_rels/workbook.xml.rels"];
+    const sheetMap = {}; // worksheet file path -> sheet name
+    if (wbXml && wbRelsXml){
+      try{
+        const wdoc = parseXml(wbXml);
+        const rdoc = parseXml(wbRelsXml);
+        const rrels = {};
+        Array.from(rdoc.getElementsByTagName("Relationship") || []).forEach(r => {
+          rrels[r.getAttribute("Id")] = r.getAttribute("Target");
+        });
+        Array.from(wdoc.getElementsByTagName("sheet") || []).forEach(s => {
+          const name = s.getAttribute("name");
+          const rid = s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || s.getAttribute("r:id");
+          const tgt = rrels[rid] || "";
+          const path = ("xl/" + tgt.replace(/^\//,"")).toLowerCase();
+          sheetMap[path] = name;
+        });
+      }catch(e){}
+    }
+
+    // Attempt to find owner worksheet for each unmapped comment by scanning worksheet rels
+    if (results["__unmapped__"] && results["__unmapped__"].length){
+      const relFiles = Object.keys(zip).filter(k => k.startsWith("xl/worksheets/_rels/") && k.endsWith(".rels"));
+      for (const cm of results["__unmapped__"]){
+        let ownerSheetName = null;
+        try{
+          for (const rf of relFiles){
+            const rdoc = parseXml(zip[rf]);
+            const rels = Array.from(rdoc.getElementsByTagName("Relationship") || []);
+            for (const r of rels){
+              const target = r.getAttribute("Target") || "";
+              if (!target) continue;
+              const norm = normalisePath(rf, target);
+              if (!norm) continue;
+              if (norm === cm.rawPath.toLowerCase()){
+                // owner is the worksheet whose rel file this is
+                const wsFile = rf.replace(/^xl\/worksheets\/_rels\//, "xl/worksheets/").replace(/\.rels$/,"");
+                ownerSheetName = sheetMap[wsFile] || null;
+                break;
+              }
+            }
+            if (ownerSheetName) break;
+          }
+        }catch(e){}
+        const sheetKey = ownerSheetName || "__unknown_sheet__";
+        if (!results[sheetKey]) results[sheetKey] = [];
+        results[sheetKey].push({ addr: cm.addr, author: cm.author, text: cm.text, date: cm.date || null });
+      }
+      delete results["__unmapped__"];
+    }
+
+    // Normalize result keys by trimming possible surrounding quotes
+    const normalized = {};
+    for (const [k,v] of Object.entries(results)){
+      const nk = typeof k === "string" ? k.replace(/^['"]|['"]$/g,'') : k;
+      normalized[nk] = v;
+    }
+    return normalized;
+  }catch(e){
+    console.warn("[notes] extraction failed", e);
+    return {};
+  }
+}
+
+/* ===================== NOTES PANEL UI ===================== */
+
+function ensureNotesPanel(){
+  let panel = document.getElementById("notesPanel");
+  if (panel) return;
+  const aside = document.querySelector("aside");
+  if (!aside) return;
+  panel = document.createElement("div");
+  panel.className = "panel";
+  panel.id = "notesPanel";
+  const h2 = document.createElement("h2");
+  h2.textContent = "Notes";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = "Cell notes and comments extracted from the workbook.";
+  const out = document.createElement("div");
+  out.id = "notesOut";
+  panel.appendChild(h2); panel.appendChild(meta); panel.appendChild(out);
+  aside.appendChild(panel);
+}
+
+function notesOutEl(){ return document.getElementById("notesOut"); }
+
+/**
+ * Render the notes for the active sheet in the notes panel.
+ * Click on a note will try to scroll to and highlight the corresponding cell in the render.
+ */
+function renderNotesForActiveSheet(){
+  const sheet = sheetSel.value;
+  const out = notesOutEl();
+  if (!out) return;
+  out.innerHTML = "";
+  const notes = notesBySheet[sheet] || [];
+  if (!notes.length){
+    out.innerHTML = `<div class="meta">No notes found on this sheet.</div>`;
+    return;
+  }
+  // sort by address (A1, A2, ...)
+  notes.sort((a,b)=> (a.addr||"").localeCompare(b.addr||""));
+  notes.forEach(n=>{
+    const el = document.createElement("div");
+    el.className = "note";
+    const addr = document.createElement("b");
+    addr.textContent = (n.addr || "Cell");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = n.author ? `Author: ${n.author}` : "Author: –";
+    const text = document.createElement("div");
+    text.textContent = n.text || "";
+    text.style.marginTop = "6px";
+    el.appendChild(addr);
+    el.appendChild(meta);
+    el.appendChild(text);
+    if (n.date){
+      const d = document.createElement("div");
+      d.className = "meta";
+      d.textContent = `Updated: ${n.date}`;
+      el.appendChild(d);
+    }
+    out.appendChild(el);
+
+    el.addEventListener('click', ()=>{
+      // Try to find cell with data-address attribute in the currentHTMLTable
+      if (!currentHTMLTable || !n.addr) {
+        el.animate ? el.animate([{ transform: "translateY(-2px)" }, { transform: "translateY(0)" }], { duration: 150 }) : null;
+        return;
+      }
+      const selector = `[data-address="${n.addr}"]`;
+      const td = currentHTMLTable.querySelector(selector);
+      if (td){
+        td.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+        td.classList.add('note-highlight');
+        setTimeout(()=> td.classList.remove('note-highlight'), 2400);
+      } else {
+        // Try case-insensitive lookup in case address formatting differs
+        const candidates = Array.from(currentHTMLTable.querySelectorAll('td[data-address]')).filter(t=> (t.dataset.address || "").toLowerCase()=== (n.addr||"").toLowerCase());
+        if (candidates.length){
+          candidates[0].scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+          candidates[0].classList.add('note-highlight');
+          setTimeout(()=> candidates[0].classList.remove('note-highlight'), 2400);
+        } else {
+          // flash the notes item if no corresponding cell
+          el.animate ? el.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: 200 }) : null;
+        }
+      }
+    });
+  });
+}
