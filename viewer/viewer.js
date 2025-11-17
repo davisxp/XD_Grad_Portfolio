@@ -353,6 +353,19 @@ function ensureChartsPanel(){
     display: block;
     margin: 12px 0;
   }
+  #notesOut {
+  overflow-y: auto;
+  max-height: 60vh;
+  scrollbar-width: thin;
+  scrollbar-color: #bbb transparent;
+  }
+  #notesOut::-webkit-scrollbar {
+    width: 6px;
+  }
+  #notesOut::-webkit-scrollbar-thumb {
+    background: #bbb;
+    border-radius: 3px;
+  }
   @media (max-width: 720px) {
     #chartsOut canvas { aspect-ratio: 1 / 1; }
   }
