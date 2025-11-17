@@ -862,18 +862,27 @@ async function renderChartsForActiveSheet(){
   }
 
   defs.slice(0, 12).forEach((def, idx) => {
-    const title = evalTitle(def);
     const cnv = document.createElement("canvas");
-    cnv.setAttribute("aria-label", title || ("Chart "+(idx+1)));
+    const title = evalTitle(def);
+    cnv.setAttribute("aria-label", title || ("Chart " + (idx + 1)));
 
-    // === Heuristic sizing: set aspect ratio per chart type ===
-    if (/bar|histogram/i.test(def.type)) {
-      cnv.style.aspectRatio = "1 / 1";
-    } else if (/stock|ohlc|candlestick/i.test(def.type)) {
-      cnv.style.aspectRatio = "2 / 1";
-    } else {
-      cnv.style.aspectRatio = "1.6 / 1";
-    }
+    // === Heuristic sizing: compute pixel size BEFORE Chart.js init ===
+    const baseWidth = co.clientWidth || 600;   // container width
+    let aspect = 1.6;                          // default aspect ratio
+    if (/bar|histogram/i.test(def.type)) aspect = 1;
+    else if (/stock|ohlc|candlestick/i.test(def.type)) aspect = 2;
+
+    // Pixel dimensions: scale with container but cap extremes
+    const widthPx = Math.max(400, Math.min(baseWidth, 1000));
+    const heightPx = Math.round(widthPx / aspect);
+    cnv.width  = widthPx;
+    cnv.height = heightPx;
+
+    // Keep CSS in sync for responsiveness
+    cnv.style.width  = "100%";
+    cnv.style.height = "auto";
+    cnv.style.display = "block";
+    cnv.style.margin  = "12px 0";
 
     co.appendChild(cnv);
 
