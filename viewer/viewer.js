@@ -334,47 +334,163 @@ function setChartsStatus(text){
 /* Dynamic loader for Chart.js + time adapter + financial plugin */
 let chartLibPromise = null;
 function loadChartLibsOnce(){
-  if (window.Chart && window.Chart.registry) return Promise.resolve();
+  if (window.Chart && window.Chart.register) return Promise.resolve();
   if (chartLibPromise) return chartLibPromise;
 
   function loadScript(src){
     return new Promise((res, rej)=>{
-      const s = document.createElement("script"); s.src = src; s.onload = res; s.onerror = () => rej(new Error("Failed to load " + src));
+      const s = document.createElement("script");
+      s.src = src;
+      s.onload = res;
+      s.onerror = () => rej(new Error("Failed to load " + src));
       document.head.appendChild(s);
     });
   }
+
   chartLibPromise = (async ()=>{
-    await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
-    await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
-    await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
-    if (window.Chart && window.Chart.register) {
-      const seen = new Set();
-      function tryAdd(obj){
-        if (!obj) return;
-        const key = obj.id || obj.prototype?.id || obj.name;
-        if (key && !seen.has(key)) {
-          seen.add(key);
-          registrables.push(obj);
+    try {
+      await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
+      await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
+      await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
+
+      if (window.Chart && window.Chart.register) {
+        // collect registrables then register once
+        const registrables = [];
+        const seen = new Set();
+        function tryAdd(obj){
+          if (!obj) return;
+          const key = obj.id || obj.prototype?.id || obj.name;
+          if (key && !seen.has(key)) { seen.add(key); registrables.push(obj); }
+        }
+
+        const globalExports = window["chartjs-chart-financial"];
+        if (globalExports && typeof globalExports === "object") {
+          Object.values(globalExports).forEach(tryAdd);
+        }
+
+        const names = [
+          "FinancialController","CandlestickController","OhlcController",
+          "FinancialElement","CandlestickElement","OhlcElement",
+          "ScaledFinancialElement","FinancialScale"
+        ];
+        names.forEach(n => tryAdd(window.Chart[n]));
+
+        if (registrables.length) {
+          try { window.Chart.register(...registrables); } catch(e) { console.warn("Chart registration failed", e); }
         }
       }
-      const registrables = [];
-      const globalExports = window["chartjs-chart-financial"];
-      if (globalExports && typeof globalExports === "object") {
-        Object.values(globalExports).forEach(tryAdd);
-      }
-      const names = [
-        "FinancialController","CandlestickController","OhlcController",
-        "FinancialElement","CandlestickElement","OhlcElement",
-        "ScaledFinancialElement","FinancialScale"
-      ];
-      names.forEach(n => tryAdd(window.Chart[n]));
-      if (registrables.length) {
-        try { window.Chart.register(...registrables); } catch(_) {}
-      }
+    } catch (e) {
+      // propagate but also set UI state so user sees what's wrong
+      setChartsStatus("Chart libraries failed to load: " + (e.message || "network error"));
+      console.warn(e);
+      throw e;
     }
   })();
+
   return chartLibPromise;
 }
+
+async function extractNotesFromXLSX(arrayBuffer){
+  try {
+    const zipRaw = fflate.unzipSync(new Uint8Array(arrayBuffer));
+    const zip = {}; Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
+
+    const parse = u8 => (new DOMParser()).parseFromString(new TextDecoder("utf-8").decode(u8), "application/xml");
+    const notesMap = {}; // { sheetName: [ { addr, author, text, date } ] }
+
+    // simple: parse any xl/comments*.xml
+    Object.keys(zip).forEach(p => {
+      const m = p.match(/^xl\/comments(\d*)\.xml$/i);
+      if (!m) return;
+      const doc = parse(zip[p]);
+      // authors
+      const authors = Array.from(doc.getElementsByTagName("author")).map(n => n.textContent || "");
+      const commentNodes = Array.from(doc.getElementsByTagName("comment"));
+      commentNodes.forEach(cn => {
+        const ref = cn.getAttribute("ref"); // e.g. A1
+        const authorId = parseInt(cn.getAttribute("authorId")||"0",10);
+        const author = authors[authorId] || "";
+        const textParts = Array.from(cn.getElementsByTagName("t")).map(t=>t.textContent || "").join("");
+        // we don't know sheet; try to attach to active sheet later — store under key "__global"
+        const key = "__global";
+        notesMap[key] = notesMap[key] || [];
+        notesMap[key].push({ addr: ref, author, text: textParts, date: null });
+      });
+    });
+
+    // Also try threaded comments
+    Object.keys(zip).forEach(p => {
+      const m = p.match(/^xl\/threadedcomments\/threadedcomment(\d*)\.xml$/i);
+      if (!m) return;
+      const doc = parse(zip[p]);
+      const authors = Array.from(doc.getElementsByTagName("author")).map(n=>n.textContent||"");
+      const threads = Array.from(doc.getElementsByTagName("commentThread"));
+      threads.forEach(th => {
+        const ref = th.getAttribute("ref");
+        const comments = Array.from(th.getElementsByTagName("comment"));
+        comments.forEach(c => {
+          const authorId = parseInt(c.getAttribute("authorId")||"0",10);
+          const author = authors[authorId] || "";
+          const text = Array.from(c.getElementsByTagName("text")).map(t=>t.textContent||"").join("");
+          notesMap["__global"] = notesMap["__global"] || [];
+          notesMap["__global"].push({ addr: ref, author, text, date: null });
+        });
+      });
+    });
+
+    // best-effort: attach global notes to each sheet (user Excel often stores refs like 'Sheet1'!A1 but if unknown leave global)
+    // we will return notesBySheet where sheetName -> array
+    const res = {};
+    Object.keys(notesMap).forEach(k => {
+      if (k === "__global") {
+        // attach to all sheets as cell refs may include sheet name or not
+        if (currentWB && currentWB.SheetNames) {
+          currentWB.SheetNames.forEach(sn => { res[sn] = (res[sn] || []).concat(notesMap[k]); });
+        }
+      } else res[k] = notesMap[k];
+    });
+    return res;
+  } catch (e) {
+    console.warn("Notes extraction failed", e);
+    return {};
+  }
+}
+
+function ensureNotesPanel(){
+  let panel = document.getElementById("notesPanel");
+  if (panel) return;
+  const aside = document.querySelector("aside");
+  if (!aside) return;
+  panel = document.createElement("div");
+  panel.className = "panel";
+  panel.id = "notesPanel";
+  const h2 = document.createElement("h2"); h2.textContent = "Notes";
+  const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = "Cell comments and threaded notes.";
+  const out = document.createElement("div"); out.id = "notesOut";
+  panel.appendChild(h2); panel.appendChild(meta); panel.appendChild(out);
+  aside.appendChild(panel);
+}
+
+function renderNotesForActiveSheet(){
+  const sheet = sheetSel.value;
+  const out = document.getElementById("notesOut");
+  if (!out) return;
+  out.innerHTML = "";
+  const notes = (notesBySheet && notesBySheet[sheet]) || [];
+  if (!notes.length) { out.innerHTML = '<div class="meta">No notes found on this sheet.</div>'; return; }
+  notes.forEach(n => {
+    const div = document.createElement("div");
+    div.className = "note";
+    div.innerHTML = `<b>${n.addr}</b> <small style="color:#666">by ${n.author||'–'}</small><div style="margin-top:6px">${n.text}</div>`;
+    div.addEventListener('click', ()=> {
+      // highlight cell if present in table
+      const td = out.closest('main').querySelector(`[data-address="${n.addr}"]`);
+      if (td) td.scrollIntoView({behavior:'smooth',block:'center'});
+    });
+    out.appendChild(div);
+  });
+}
+
 
 /* Helpers shared by extractor and renderer */
 const tdDecoder = new TextDecoder("utf-8");
@@ -710,7 +826,12 @@ async function renderChartsForActiveSheet(){
     return;
   }
 
-  await loadChartLibsOnce();
+  try {
+    await loadChartLibsOnce();
+  } catch (e) {
+    setChartsStatus("Charts unavailable (library load error)");
+    return;
+  }
 
   defs.slice(0, 12).forEach((def, idx) => {
     const title = evalTitle(def);
