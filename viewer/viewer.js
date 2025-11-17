@@ -392,6 +392,10 @@ function loadChartLibsOnce(){
 
 async function extractNotesFromXLSX(arrayBuffer){
   try {
+    if (typeof fflate === "undefined") {
+      await window.ensureFflate?.(); // fallback if your index.html defines ensureFflate
+      if (typeof fflate === "undefined") throw new Error("fflate not loaded");
+    }    
     const zipRaw = fflate.unzipSync(new Uint8Array(arrayBuffer));
     const zip = {}; Object.keys(zipRaw).forEach(k => zip[k.toLowerCase()] = zipRaw[k]);
 
@@ -514,6 +518,10 @@ function excelSerialToDate(serial, use1904){
 /* Extract charts from XLSX ArrayBuffer */
 async function extractChartsFromXLSX(arrayBuffer){
   try{
+    if (typeof fflate === "undefined") {
+      await window.ensureFflate?.(); // fallback if your index.html defines ensureFflate
+      if (typeof fflate === "undefined") throw new Error("fflate not loaded");
+    }    
     const zipRaw = fflate.unzipSync(new Uint8Array(arrayBuffer));
     // case-insensitive view over zip entries
     const zip = {};
