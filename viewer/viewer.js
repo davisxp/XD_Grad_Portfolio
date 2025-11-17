@@ -351,7 +351,7 @@ function loadChartLibsOnce(){
     try {
       await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
       await loadScript("https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js");
-      await loadScript("https://cdn.jsdelivr.net/npm/chartjs-chart-financial@3.3.0/dist/chartjs-chart-financial.min.js");
+      await loadScript("../lib/chartjs-chart-financial.min.js");
 
       if (window.Chart && window.Chart.register) {
         // collect registrables then register once
