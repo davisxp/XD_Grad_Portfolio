@@ -915,6 +915,9 @@ async function renderChartsForActiveSheet(){
     const cnv = document.createElement("canvas");
     const title = evalTitle(def);
     cnv.setAttribute("aria-label", title || ("Chart " + (idx + 1)));
+    const legendPosMap = { top:'top', bottom:'bottom', left:'left', right:'right', tr:'top' };
+    const legendPos = legendPosMap[(def.legendPos||'top')] || 'top';
+
 
     // === Heuristic sizing: compute pixel size BEFORE Chart.js init ===
     const baseWidth = co.clientWidth || 600;   // container width
@@ -961,10 +964,10 @@ async function renderChartsForActiveSheet(){
         const pr = parseSheetAndRange(s.yRef);
         if (pr) {
           const raw = rangeToVector(getRangeValues(pr.sheet, pr.range));
-          return toNumericArray(raw).filter(Number.isFinite);
+          return toNumericArray(raw);
         }
       }
-      if (Array.isArray(s.yData)) return toNumericArray(s.yData).filter(Number.isFinite);
+      if (Array.isArray(s.yData)) return toNumericArray(s.yData);
       return [];
     }
     function resolveX(s){
@@ -980,12 +983,59 @@ async function renderChartsForActiveSheet(){
         const pr = parseSheetAndRange(s.zRef);
         if (pr) {
           const raw = rangeToVector(getRangeValues(pr.sheet, pr.range));
-          return toNumericArray(raw).filter(Number.isFinite);      
+          return toNumericArray(raw);      
         }
       }
-      if (Array.isArray(s.zData)) return toNumericArray(s.zData).filter(Number.isFinite);
+      if (Array.isArray(s.zData)) return toNumericArray(s.zData);
       return [];
     }
+    // === Axis helpers for robust X handling (dates vs numbers vs categories) ===
+    function looksLikeExcelDate(n){
+      return typeof n === "number" && n > 59 && n < 80000;
+    }
+    function coerceToX(value, use1904){
+      if (value == null) return null;
+      if (typeof value === "number"){
+        if (looksLikeExcelDate(value)){
+          const d = excelSerialToDate(value, use1904);
+          return d ? d.getTime() : null;
+        }
+        return Number.isFinite(value) ? value : null;
+      }
+      const s = String(value).trim();
+      if (s === "") return null;
+      const asNum = Number(s);
+      if (Number.isFinite(asNum)) return asNum;
+      const d = new Date(s);
+      if (!isNaN(d)) return d.getTime();
+      return null;
+    }
+    function classifyXFromLabels(labels, use1904){
+      let time = 0, linear = 0, category = 0;
+      const xs = labels.map(v => {
+        const t = coerceToX(v, use1904);
+        if (t === null){
+          category++; return { mode: 'category', value: (v === null || v === undefined) ? '' : String(v) };
+        }
+        if (t > 1e11){ time++; return { mode: 'time', value: t }; }
+        linear++; return { mode: 'linear', value: t };
+      });
+      const total = xs.length || 1;
+      const mode = (time / total) >= 0.5 ? 'time' : ((linear / total) >= 0.5 ? 'linear' : 'category');
+      return { mode, xs };
+    }
+    function coerceBound(v, mode, use1904){
+      if (v == null) return undefined;
+      if (mode === 'time'){
+        const t = coerceToX(v, use1904);
+        return (typeof t === 'number') ? t : undefined;
+      } else if (mode === 'linear'){
+        const n = Number(v);
+        return Number.isFinite(n) ? n : undefined;
+      }
+      return undefined;
+    }
+
 
     if (def.type === "pie" || def.type === "doughnut"){
       const s0 = def.series[0] || {};
@@ -994,64 +1044,87 @@ async function renderChartsForActiveSheet(){
       const cfg = {
         type: def.type,
         data: { labels, datasets: [{ label: evalSeriesName(s0) || title || "Series", data }] },
-        options: { responsive: true, plugins: { legend: { position:'top' }, title: { display: !!title, text: title } } }
+        options: { responsive: true, plugins: { legend: { position: legendPos }, title: { display: !!title, text: title } } }
       };
       chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
 
+    
     } else if (def.type === "scatter"){
+      const use1904 = !!date1904BySheet[sheet];
       const datasets = def.series.map((s, i) => {
-        const xs = resolveX(s).map(Number);
+        const xsRaw = resolveX(s);
         const ys = resolveY(s);
+        const xs = xsRaw.map(v => coerceToX(v, use1904));
         const n = Math.min(xs.length, ys.length);
-        const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k]}));
+        const data = [];
+        for (let k = 0; k < n; k++) {
+          const x = xs[k], y = ys[k];
+          if (x !== null && Number.isFinite(y)) data.push({ x, y });
+        }
         return { label: evalSeriesName(s) || ("Series " + (i+1)), data, showLine:false };
       });
+      const sample = (datasets[0]?.data || []).map(p => p.x);
+      const timeCount = sample.filter(v => typeof v === 'number' && v > 1e11).length;
+      const xType = timeCount >= Math.max(1, Math.round(sample.length * 0.5)) ? "time" : "linear";
+      const xMin = coerceBound(def.xMin, xType, use1904);
+      const xMax = coerceBound(def.xMax, xType, use1904);
+      const yMin = coerceBound(def.yMin, "linear", use1904);
+      const yMax = coerceBound(def.yMax, "linear", use1904);
+
       const cfg = {
         type: "scatter",
         data: { datasets },
-        options: { responsive:true, scales:{ x:{ type:"linear" }, y:{ type:"linear" } }, plugins:{ title:{ display: !!title, text: title } } }
+        options: { 
+          responsive:true, 
+          parsing:false,
+          scales:{ 
+            x:{ type:xType, min: xMin, max: xMax }, 
+            y:{ type:"linear", min: yMin, max: yMax } 
+          }, 
+          plugins:{ legend:{ position: legendPos }, title:{ display: !!title, text: title } } 
+        }
       };
       chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
 
+    
     } else if (def.type === "bubble"){
+      const use1904 = !!date1904BySheet[sheet];
       const datasets = def.series.map((s, i) => {
-        const xs = resolveX(s).map(Number);
+        const xsRaw = resolveX(s);
         const ys = resolveY(s);
         const zs = resolveZ(s);
+        const xs = xsRaw.map(v => coerceToX(v, use1904));
         const n = Math.min(xs.length, ys.length, zs.length || Infinity);
-        const zMin = Math.min(...zs.filter(isFinite), 0), zMax = Math.max(...zs.filter(isFinite), 1);
-        const size = (z)=> (!isFinite(z) || zMax===zMin) ? 6 : (4 + 12 * (z - zMin) / (zMax - zMin));
-        const data = Array.from({length:n}, (_,k)=>({x: xs[k], y: ys[k], r: size(zs[k])}));
+        const finiteZ = zs.filter(z => Number.isFinite(z));
+        const zMin = Math.min(...finiteZ, 0), zMax = Math.max(...finiteZ, 1);
+        const size = (z)=> (!Number.isFinite(z) || zMax===zMin) ? 6 : (4 + 12 * (z - zMin) / (zMax - zMin));
+        const data = [];
+        for (let k = 0; k < n; k++) {
+          const x = xs[k], y = ys[k], z = zs[k];
+          if (x !== null && Number.isFinite(y)) data.push({ x, y, r: size(z) });
+        }
         return { label: evalSeriesName(s) || ("Series " + (i+1)), data };
       });
-      const cfg = { type: "bubble", data: { datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
+      const sample = (datasets[0]?.data || []).map(p => p.x);
+      const timeCount = sample.filter(v => typeof v === 'number' && v > 1e11).length;
+      const xType = timeCount >= Math.max(1, Math.round(sample.length * 0.5)) ? "time" : "linear";
+      const xMin = coerceBound(def.xMin, xType, use1904);
+      const xMax = coerceBound(def.xMax, xType, use1904);
+      const yMin = coerceBound(def.yMin, "linear", use1904);
+      const yMax = coerceBound(def.yMax, "linear", use1904);
+
+      const cfg = { 
+        type: "bubble", 
+        data: { datasets }, 
+        options: { 
+          responsive:true, parsing:false, 
+          scales:{ x:{ type: xType, min: xMin, max: xMax }, y:{ type: "linear", min: yMin, max: yMax } }, 
+          plugins:{ legend:{ position: legendPos }, title:{ display: !!title, text: title } } 
+        } 
+      };
       chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
 
-    } else if (def.type === "radar"){
-      const s0 = def.series[0] || {};
-      const labels = resolveLabels(s0);
-      const datasets = def.series.map((s, i) => ({
-        label: evalSeriesName(s) || ("Series " + (i+1)),
-        data: resolveY(s)
-      }));
-      const cfg = { type: "radar", data: { labels, datasets }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
-      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
-
-    } else if (def.type === "histogram"){
-      const s0 = def.series[0] || {};
-      const x = resolveX(s0), y = resolveY(s0);
-      let labels = [], counts = [];
-      if (x.length && y.length && x.length === y.length){
-        labels = x.map(v=>String(v ?? ""));
-        counts = y;
-      } else {
-        const values = y.length ? y : x.map(Number);
-        const h = buildHistogram(values);
-        labels = h.labels; counts = h.counts;
-      }
-      const cfg = { type: "bar", data: { labels, datasets:[{ label: evalSeriesName(s0) || title || "Histogram", data: counts }] }, options: { responsive:true, plugins:{ title:{ display: !!title, text: title } } } };
-      chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
-
+    
     } else if (def.type === "stock"){
       // Expect datasets for O/H/L/C; accept either named series or positional order
       const s = def.series;
@@ -1097,14 +1170,17 @@ async function renderChartsForActiveSheet(){
         return { x, o: +opens[i], h: +highs[i], l: +lows[i], c: +closes[i] };
       });
 
+      const yMin = coerceBound(def.yMin, "linear", use1904);
+      const yMax = coerceBound(def.yMax, "linear", use1904);
+
       let cfg = {
         type: "ohlc",
         data: { datasets: [{ label: title || "OHLC", data }] },
         options: {
           responsive: true,
           parsing: false,
-          scales: { x: { type: "time", time: { unit: "day" } } },
-          plugins: { title: { display: !!title, text: title } }
+          scales: { x: { type: "time", time: { unit: "day" } }, y: { min: yMin, max: yMax } },
+          plugins: { legend:{ position: legendPos }, title: { display: !!title, text: title } }
         }
       };
       try{
@@ -1114,25 +1190,60 @@ async function renderChartsForActiveSheet(){
         cfg = {
           type: "bar",
           data: { labels: labels.map(v=>String(v ?? "")), datasets:[{ label: "Close", data: closes }] },
-          options: { responsive:true, plugins:{ title:{ display:true, text: (title? title+" (Close only)" : "Close") } } }
+          options: { responsive:true, plugins:{ legend:{ position: legendPos }, title:{ display:true, text: (title? title+" (Close only)" : "Close") } } }
         };
         chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
       }
 
+    
     } else {
-      // line / area / bar (default)
+      // line / area / bar (default) — robust axis handling
       const s0 = def.series[0] || {};
-      const labels = resolveLabels(s0);
-      const datasets = def.series.map((s, i) => ({
-        label: evalSeriesName(s) || ("Series " + (i+1)),
-        data: resolveY(s)
-      }));
+      const labelsRaw = resolveLabels(s0);
+      const use1904 = !!date1904BySheet[sheet];
+      const { mode: xMode, xs } = classifyXFromLabels(labelsRaw, use1904);
+
+      const datasets = def.series.map((s, i) => {
+        const name = evalSeriesName(s) || ("Series " + (i+1));
+        const ys = resolveY(s);
+        if (xMode === 'category') {
+          return { label: name, data: ys };
+        } else {
+          const data = [];
+          const n = Math.min(xs.length, ys.length);
+          for (let k = 0; k < n; k++) {
+            const xv = xs[k].value;
+            const yv = ys[k];
+            if (xv !== null && Number.isFinite(yv)) data.push({ x: xv, y: yv });
+          }
+          return { label: name, data };
+        }
+      });
+
       const chartType = (def.type === "area") ? "line" : (def.type === "bar" ? "bar" : "line");
-      const options = { responsive:true, plugins:{ title:{ display: !!title, text: title } } };
+      const options = { 
+        responsive:true, 
+        parsing: (xMode === 'category'),  // use object points when not category
+        spanGaps: true,
+        plugins:{ legend:{ position: legendPos }, title:{ display: !!title, text: title } } 
+      };
       if (chartType === "line" && def.type === "area") {
         datasets.forEach(d => d.fill = true);
       }
-      const cfg = { type: chartType, data: { labels, datasets }, options };
+
+      const xMin = coerceBound(def.xMin, xMode, use1904);
+      const xMax = coerceBound(def.xMax, xMode, use1904);
+      const yMin = coerceBound(def.yMin, "linear", use1904);
+      const yMax = coerceBound(def.yMax, "linear", use1904);
+
+      const cfg = { 
+        type: chartType, 
+        data: (xMode === 'category') ? { labels: xs.map(o => o.value), datasets } : { datasets }, 
+        options: Object.assign({}, options, { 
+          scales: (xMode === 'category') ? { y: { min: yMin, max: yMax } } 
+                                         : { x:{ type: xMode, min: xMin, max: xMax }, y:{ min: yMin, max: yMax } } 
+        }) 
+      };
       chartInstances.push(new Chart(cnv.getContext("2d"), cfg));
     }
   });
