@@ -369,8 +369,6 @@ function ensureChartsPanel(){
   @media (max-width: 720px) {
     #chartsOut canvas { aspect-ratio: 1 / 1; }
   }
-}
-
 `;
   document.head.appendChild(css);
 }
