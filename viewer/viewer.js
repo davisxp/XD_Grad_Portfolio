@@ -1,6 +1,16 @@
 // viewer.js (ES module) — UI orchestration + chart extraction/rendering.
 // Relies on global third-party libs loaded by index.html: XLSX, HyperFormula, fflate.
 // Loads Chart.js + plugins on-demand.  
+// Escape HTML utility to prevent XSS in error messages
+function escapeHTML(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const files = [
   { path: "../models/3_Statement_Model.xlsx", label: "3-Statement Model" },
   { path: "../models/DCF_SN.xlsx",            label: "DCF Valuations" },
@@ -145,7 +155,7 @@ async function loadWorkbook(path) {
     status(`${path} • ${currentWB.SheetNames.length} sheet(s)`);
     syncLink();
   } catch (e) {
-    out.innerHTML = `<div class="error">${e.message}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
+    out.innerHTML = `<div class="error">${escapeHTML(e.message)}. Check the file path (case-sensitive), ensure the workbook is under 100 MB, and not stored via Git LFS.</div>`;
     setChartsStatus("No charts");
     status("Error loading workbook");
   }
