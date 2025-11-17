@@ -687,6 +687,7 @@ header .toolbar input[type="text"]:focus,
 
       function formatUsingCell(val, cell, sheetName, date1904BySheet) {
         if (val === null || val === undefined) return "";
+        if (typeof val === "string" && val.trim() === "") return "";
         if (val && typeof val === "object" && "type" in val) {
           if (cell && typeof cell.w === "string" && cell.w.trim()) return cell.w;
           const map = { NAME: "#NAME?", REF: "#REF!", DIV_BY_ZERO: "#DIV/0!", VALUE: "#VALUE!", NUM: "#NUM!", NA: "#N/A" };
@@ -719,6 +720,7 @@ header .toolbar input[type="text"]:focus,
           } catch {}
         }
         if (cell && typeof val === "number" && !cell.z) {
+          if (!Number.isFinite(val)) return "";
           return val.toFixed(2);
         }
 

@@ -945,18 +945,32 @@ async function renderChartsForActiveSheet(){
       if (Array.isArray(firstSeries?.catData)) return firstSeries.catData.map(v => String(v ?? ""));
       return [];
     }
+    function toNumericArray(arr){
+      if(!Array.isArray(arr)) return [];
+      return arr.map(v => {
+        if (v === null || v === undefined) return NaN;
+        if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+        const s = String(v).trim();
+        if (s === "") return NaN;
+        const n = Number(s);
+        return Number.isFinite(n) ? n : NaN;
+      });
+    }
     function resolveY(s){
       if (s.yRef){
         const pr = parseSheetAndRange(s.yRef);
-        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+        if (pr) {
+          const raw = rangeToVector(getRangeValues(pr.sheet, pr.range));
+          return toNumericArray(raw).filter(Number.isFinite);
+        }
       }
-      if (Array.isArray(s.yData)) return s.yData.map(Number);
+      if (Array.isArray(s.yData)) return toNumericArray(s.yData).filter(Number.isFinite);
       return [];
     }
     function resolveX(s){
       if (s.xRef){
         const pr = parseSheetAndRange(s.xRef);
-        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range));
+        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(v => (v === null ? "" : String(v)));
       }
       if (Array.isArray(s.xData)) return s.xData.slice();
       return [];
@@ -964,9 +978,12 @@ async function renderChartsForActiveSheet(){
     function resolveZ(s){
       if (s.zRef){
         const pr = parseSheetAndRange(s.zRef);
-        if (pr) return rangeToVector(getRangeValues(pr.sheet, pr.range)).map(Number);
+        if (pr) {
+          const raw = rangeToVector(getRangeValues(pr.sheet, pr.range));
+          return toNumericArray(raw).filter(Number.isFinite);      
+        }
       }
-      if (Array.isArray(s.zData)) return s.zData.map(Number);
+      if (Array.isArray(s.zData)) return toNumericArray(s.zData).filter(Number.isFinite);
       return [];
     }
 
